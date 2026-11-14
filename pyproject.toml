@@ -23,8 +23,8 @@ dependencies = [
     "certifi>=2026.10.19",
     "httpx>=0.28.1",
     "keyring>=25.6.0",
-    "playwright>=1.63.0",
-    "typer>=0.27.2",
+    "playwright>=1.65.0",
+    "typer>=0.29.1",
 ]
 
 license = "MIT"
@@ -41,16 +41,16 @@ Security = "https://github.com/webswe/d2l-student-cli/blob/main/SECURITY.md"
 d2l = "d2l_cli:main"
 
 [build-system]
-requires = ["uv_build>=0.11.32,<0.12.0"]
+requires = ["uv_build>=0.13.7,<0.14.0"]
 build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
-    "mypy>=2.3.1",
-    "pytest>=9.1.1",
-    "pytest-mock>=3.15.1",
+    "mypy>=2.4.1",
+    "pytest>=9.2.0",
+    "pytest-mock>=3.17.0",
     "respx>=0.23.1",
-    "ruff>=0.16.8",
+    "ruff>=0.17.4",
 ]
 
 [tool.pytest.ini_options]
