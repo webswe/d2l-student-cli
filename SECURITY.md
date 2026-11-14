@@ -2,8 +2,8 @@
 
 ## Supported versions
 
-Security fixes are developed on the latest `main` branch. The current stable
-line is 0.1.x. This is a personal project, so older releases do not receive a
+Security fixes are developed on the latest `main` branch. The first public version is 0.1.0
+(release date pending). This is a personal project, so older releases do not receive a
 guaranteed support window. Fixes ship as a new version; published tags are never
 moved, and affected versions are named in the changelog.
 
@@ -27,11 +27,16 @@ downstream AI tools must treat academic text as data, not instructions.
 
 ## Reporting a vulnerability
 
-Report a suspected vulnerability privately through GitHub's **Report a
-vulnerability** facility when it is available for this repository. If private
-reporting is unavailable, open a public issue that says only that you have a security
-report (no details) and ask for a private channel.
+Do not post vulnerability details, exploit steps, credentials, session cookies or academic
+records in a public issue, pull request or discussion.
 
+1. **Preferred:** use GitHub's **Report a vulnerability** option (Security tab, Advisories) when
+   it is shown for this repository. Reports made that way are visible only to the maintainer.
+2. **If that option is not shown:** open a public issue titled "Security contact request" that
+   says only that you have a security report and names the general area (for example
+   "session handling"). Include no details. The maintainer will reply on the issue with a
+   private way to continue; wait for that reply before sending anything else.
+3. This is a best-effort personal project and no response time is guaranteed.
 Do not open a public issue containing credentials, session cookies, private
 academic records, institutional response bodies, or an active exploit against
 an institutional service. Use fictional data in reproductions. Do not test a

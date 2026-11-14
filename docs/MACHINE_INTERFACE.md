@@ -1,7 +1,7 @@
 # Machine-readable interface
 
-This document defines the supported subprocess JSON interface through D2L-CLI
-0.1.1, retaining the `v0.1.0-rc.1` contract baseline. It describes normalized
+This document defines the supported subprocess JSON interface of D2L-CLI 0.1.0.
+It describes normalized
 output, not Brightspace's undocumented responses. Commands and fields outside
 this document are not part of the machine interface.
 

@@ -27,51 +27,94 @@ Supported environments and limits are listed in the table above and in the secti
 ## Prerequisites
 
 - Windows 10 or 11 with Windows Credential Manager available.
+- [Git](https://git-scm.com/downloads), to clone the repository.
 - Python 3.11 or newer.
 - [`uv`](https://docs.astral.sh/uv/getting-started/installation/).
-- Network access to the configured Brightspace site.
-- A working institutional Brightspace account. You must complete SSO and MFA
-  yourself; the CLI never asks for or automates those credentials.
+- Network access to GitHub, PyPI and Playwright's browser download during setup, and to your
+  institution's Brightspace site afterwards.
+- A working institutional Brightspace account. You must complete SSO and MFA yourself; the CLI
+  never asks for or automates those credentials.
 
-The application is currently exercised on Windows with Python 3.11. Other
-Python versions allowed by `pyproject.toml` are not part of the present
-Windows acceptance baseline.
+Windows with Python 3.11, 3.12 and 3.13 is covered by the automated test matrix. Only one
+institution's Brightspace has been validated (see the table above); any other institution is
+unverified.
 
 ## Install on Windows
 
-Open Windows PowerShell in a local checkout of this repository, then run:
+Setup is four separate steps. None of them signs you in.
+
+**1. Get the source.** In Windows PowerShell:
+
+```powershell
+git clone https://github.com/webswe/d2l-student-cli.git
+cd d2l-student-cli
+```
+
+**2. Install the locked Python dependencies** into the project's own `.venv` (nothing is installed
+globally):
 
 ```powershell
 uv sync --locked
+```
+
+**3. Install the browser runtime.** Installing the Python package does not install Chromium, which
+`auth login` uses:
+
+```powershell
 uv run playwright install chromium
+```
+
+**4. Check the installation:**
+
+```powershell
 uv run d2l --version
 uv run d2l --help
 ```
 
-`uv sync --locked` installs the dependency versions recorded in `uv.lock`.
-The separate Playwright command is required because installing the Python
-package does not install its Chromium browser binary. Both steps need network
-access the first time.
+Steps 1 to 3 need network access and can take a few minutes on a first run.
 
-The project intentionally uses the repository's `uv` environment; no global
-Python package installation is required.
+## First login and first read
 
-## First login
+Logging in needs you, in front of the computer. The CLI cannot complete it on its own.
 
 ```powershell
 uv run d2l auth login
-uv run d2l auth status
 ```
 
-`auth login` opens an isolated Chromium window. Complete the institution's
-normal SSO and MFA flow by hand. After Brightspace loads, the CLI stores the
-origin-scoped session in Windows Credential Manager and closes the isolated
-browser context. It does not store a password or MFA code.
+1. An isolated Chromium window opens on your institution's Brightspace site.
+2. You complete your institution's normal SSO and MFA in that window. How long this takes depends
+   on your institution; the CLI waits for you (up to 10 minutes).
+3. When Brightspace loads, the CLI stores the session (see below) and closes the browser context.
 
-`auth status` makes one read-only course-list request to verify that the saved
-session is still accepted. A locally present session is not reported as
-authenticated unless that request succeeds.
+Then check the session and read some data:
 
+```powershell
+uv run d2l auth status
+uv run d2l courses list
+uv run d2l courses list --json
+```
+
+`auth status` makes one read-only course-list request to confirm that the saved session is still
+accepted. A locally present session is not reported as authenticated unless that request succeeds.
+
+### What is stored, and what it is bound to
+
+- **Stored:** the cookies Chromium holds for the configured Brightspace origin, as one `Cookie`
+  header value plus the cookie names, in a single Windows Credential Manager entry (service
+  `d2l-student-cli`, key `session`). Cookies for other sites are not captured. No password or MFA
+  code is stored, and nothing is written to a file.
+- **Isolated:** that service name belongs to this project. This tool does not read, overwrite or
+  delete entries that belong to other applications, and there is no automatic migration of
+  credentials from anywhere else.
+- **Not origin-bound:** the entry records no origin. Every command sends the stored cookies to
+  whatever origin is configured (the default, or `D2L_CLI_BASE_URL`). If you change the base URL,
+  run `d2l auth login` again, and do not point the tool at a host you do not trust while a session
+  is stored, because the stored cookies would be sent there.
+- **Expiry:** an expired session is detected from the provider's login redirect, and the command
+  stops with a "log in again" error and a non-zero exit code. Nothing is renewed or deleted
+  automatically.
+- **Logout:** there is no `logout` command. To remove the session, delete the Credential Manager
+  entries whose name contains `d2l-student-cli`.
 ## What it does today
 
 | Command | What it does |
@@ -280,7 +323,8 @@ One command invocation makes exactly one authenticated News-listing GET.
   installed globally.
 - **Remove stored login:** your session lives in Windows Credential Manager (Control Panel,
   Credential Manager, Windows Credentials, entries whose name contains `d2l-student-cli`). Deleting the folder
-  does **not** remove it; remove the entries yourself. Nothing is deleted automatically.
+  does **not** remove it; remove the entries yourself. There is no `logout` command, and nothing
+  is deleted automatically.
 
 ## Security model
 
@@ -345,7 +389,8 @@ uv run d2l auth login
 
 Remove a temporary override with
 `Remove-Item Env:D2L_CLI_BASE_URL`. A stored session is not bound to the origin it was
-saved for: run `d2l auth login` again after changing the base URL.
+saved for: run `d2l auth login` again after changing the base URL, and see "What is stored,
+and what it is bound to" above.
 
 ## Troubleshooting
 

@@ -15,14 +15,14 @@ automation may push, publish, or create a final tag without explicit approval.
   release stage.
 - Never upload two different artifacts with the same package version. Never
   move or rewrite a published tag; correct a bad release with a new version.
-- Keep `CHANGELOG.md` under an `Unreleased` heading until the owner approves the
-  final release, then replace `Unreleased` with the release date in ISO format.
+- Keep `CHANGELOG.md` under an `X.Y.Z (release date pending)` heading until the maintainer
+  approves the final release, then replace `(release date pending)` with the date, giving
+  `X.Y.Z (YYYY-MM-DD)`.
 
-The existing `v0.1.0-rc.1` tag is a Git checkpoint whose package metadata was
-already `0.1.0`. Because no package-index artifact was published, the final
-standalone release should keep package version `0.1.0` and, after acceptance,
-receive a new `v0.1.0` tag. Do not alter the RC tag. For future cycles, set
-pre-release package metadata before creating distributable RC artifacts.
+The first public version is `0.1.0`. After acceptance it receives an annotated `v0.1.0` tag on
+the final release commit, created only after the commit that dates the changelog has passed CI.
+A published tag is never moved. For later cycles, set pre-release package metadata before
+creating distributable RC artifacts.
 
 ## Offline acceptance checklist
 
@@ -73,14 +73,14 @@ Blockers (do not release): failing required tests or CI on the release commit; a
 exploitable high-severity security issue; broken authentication; broken packaging or
 `scripts/verify_dist.py` failure; any secret, academic record or owner path in a tracked file or
 artifact; a changed JSON contract; platform or institution claims the evidence does not
-support; no owner-approved license; failed fresh-clone validation; unverified release artifacts.
+support; a missing or inconsistent LICENSE; failed fresh-clone validation; unverified release artifacts.
 Recommendations (do not block): additional platforms, extra badges, further refactoring.
 
 ## Maintainer release checklist
 
 1. Confirm CI is green on the exact commit (`gh run list --branch main`).
-2. Bump `version` in `pyproject.toml`, run `uv lock`, move `Unreleased` in `CHANGELOG.md` to the
-   dated version, commit.
+2. Bump `version` in `pyproject.toml`, run `uv lock`, replace `(release date pending)` in
+   `CHANGELOG.md` with the release date, commit.
 3. In a fresh clone in a temp directory: `uv sync --locked`, the offline checklist above, then
    `uv build --out-dir <tmp>` and `python scripts/verify_dist.py <tmp>`.
 4. Install the wheel into a new venv; run `d2l --version` and `d2l --help`.

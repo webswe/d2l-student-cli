@@ -1,17 +1,32 @@
 version: 2
 updates:
-  # Keeps the SHA-pinned workflow actions current. Updates arrive as reviewable PRs only.
+  # Workflow actions are pinned by commit SHA. Dependabot only proposes SHA bumps, as pull requests
+  # that are reviewed and merged by hand; nothing here merges automatically.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: monthly
-    open-pull-requests-limit: 2
-  # Python dependencies are updated deliberately (see docs/DEVELOPMENT.md), not on a stream.
+    open-pull-requests-limit: 1
+    cooldown:
+      default-days: 7
+
+  # Python dependencies: version updates arrive monthly as at most two reviewable pull requests,
+  # development tooling separate from runtime dependencies. They are never merged automatically.
+  # The build backend is deliberately excluded; it is upgraded by hand in its own change, after
+  # packaging checks. Security alerts and security updates are repository settings, not this file.
   - package-ecosystem: uv
     directory: /
     schedule:
       interval: monthly
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 2
+    cooldown:
+      default-days: 7
     groups:
-      python-dependencies:
+      development-tools:
+        patterns: ["mypy", "ruff", "pytest", "pytest-*", "respx"]
+      runtime-dependencies:
         patterns: ["*"]
+        exclude-patterns: ["mypy", "ruff", "pytest", "pytest-*", "respx"]
+    ignore:
+      - dependency-name: "uv-build"
+      - dependency-name: "uv_build"
