@@ -1,0 +1,359 @@
+# Machine-readable interface
+
+This document defines the supported subprocess JSON interface through D2L-CLI
+0.1.1, retaining the `v0.1.0-rc.1` contract baseline. It describes normalized
+output, not Brightspace's undocumented responses. Commands and fields outside
+this document are not part of the machine interface.
+
+The supported JSON commands are:
+
+```text
+d2l courses list --json
+d2l assignments list --course <id> --json [--include-completeness]
+d2l assignments overview --json [--chronological] [--all-courses] [--include-completeness]
+d2l grades list --course <id> --json [--include-completeness]
+d2l announcements list --course <id> --json [--include-completeness]
+d2l overview --json [--all-courses]
+d2l syllabus find --course <id> --json
+d2l syllabus fetch --course <id> --topic <topicId> --json
+```
+
+The two `syllabus` commands are specified in `docs/SYLLABUS_DISCOVERY.md` (their JSON objects are
+`syllabus_search` and `syllabus_document`).
+
+From a repository checkout, replace `d2l` with `uv run d2l`. The `--details`
+option affects only human-readable output; JSON always contains the complete
+normalized records retrieved by the command.
+
+## Common process contract
+
+- Exit `0` means the command completed successfully. An empty result is a
+  successful JSON document containing an empty array.
+- Anticipated authentication, secure-storage, provider, validation, and
+  provider-structure failures exit `1`. Their stdout is empty and a safe,
+  human-readable message beginning with `error:` is written to stderr.
+- Command-line usage errors, such as a missing required `--course`, exit `2`
+  and do not emit JSON.
+- On success, stdout contains one JSON object followed by a newline. Diagnostic
+  messages never share stdout. Consumers must check the exit code before
+  parsing stdout.
+- Warnings use stderr. Assignment and unified-overview completeness warnings
+  can accompany successful JSON. Warning text is diagnostic, not a structured
+  API, and must not be parsed. Supported completeness values are in the JSON
+  fields below.
+- JSON strings round-trip Unicode. The current encoder may use JSON `\uXXXX`
+  escapes, which are semantically equivalent to literal Unicode and keep the
+  stream safe to decode as UTF-8.
+- Object member order is not a contract. Array order is a contract as described
+  for each command.
+- Diagnostics omit credentials, authenticated URLs, course identifiers,
+  response bodies, and academic record values. Applications should still treat
+  stderr as private operational data.
+
+Authentication is a prerequisite. The user must first run `d2l auth login` and
+complete institutional SSO/MFA interactively. External applications must not
+automate that browser interaction or handle a password or MFA code. `d2l auth
+status` is human-readable, makes one verification request, and is not a JSON
+command unless `--json` is explicitly requested.
+
+## Shared record schemas
+
+Every listed key is required in its record. `null` is a value of a required,
+nullable field; it does not mean that the key can be omitted.
+
+### Course
+
+| Key | JSON type | Meaning |
+|---|---|---|
+| `id` | ASCII decimal-digit string | Brightspace course/org-unit identifier. |
+| `code` | string | Provider-displayed course code. |
+| `name` | string | Provider-displayed course name. |
+| `semester_name` | string | Provider-displayed semester name. |
+| `is_active` | boolean | Provider active flag. |
+| `can_access` | boolean | Provider access flag. |
+| `is_new_enrollment` | boolean | Provider new-enrollment flag. |
+| `start_date` | string or null | Unparsed provider date string. |
+| `end_date` | string or null | Unparsed provider date string. |
+
+`id` is the course join key within one configured Brightspace origin. Course
+identifiers and every `course_id` association below contain ASCII digits only.
+No cross-origin identity guarantee is made.
+
+### Assignment
+
+| Key | JSON type | Meaning |
+|---|---|---|
+| `id` | string | Assignment/Dropbox identifier within the course. |
+| `course_id` | ASCII decimal-digit string | Owning course/org-unit identifier. |
+| `name` | string | Provider-displayed assignment name. |
+| `submission_status` | string or null | Uninterpreted display text. |
+| `score` | string or null | Uninterpreted display text. |
+| `due_date` | string or null | Timezone-naive ISO-8601 display value. |
+
+Assignment identity is the pair (`course_id`, `id`), not `id` alone. A null
+`due_date` means no positively recognized due date was present; it does not
+mean that the assignment has no deadline.
+
+### Assignment completeness
+
+| Key | JSON type | Meaning |
+|---|---|---|
+| `status` | string enum | `below_page_size_boundary`, `potentially_truncated`, or `unknown`. |
+| `observed_row_count` | integer | Assignment-shaped rows observed before normalization. |
+| `page_size_ceiling` | integer or null | Selected page size when reliably observed. |
+
+`below_page_size_boundary` is evidence about one rendered page, not a claim
+that Brightspace has no other records. `potentially_truncated` means the
+observed count reached the selected boundary. `unknown` means the boundary
+could not be assessed.
+
+### Grade item
+
+| Key | JSON type | Meaning |
+|---|---|---|
+| `course_id` | ASCII decimal-digit string | Owning course/org-unit identifier. |
+| `label` | string | Provider-displayed grade-item label. |
+| `displayed_points` | string or null | Exact display text; never calculated. |
+| `displayed_grade` | string or null | Exact display text; never calculated. |
+| `displayed_weight` | string or null | Exact display text; never calculated. |
+| `feedback_availability` | string enum | `none`, `present`, or `unknown`. |
+
+The verified page exposes no stable grade-item identifier. Labels are not
+promised unique, so consumers must not construct a durable record identity
+from `label` or array position.
+
+### Announcement
+
+| Key | JSON type | Meaning |
+|---|---|---|
+| `course_id` | ASCII decimal-digit string | Owning course/org-unit identifier. |
+| `announcement_id` | string | Announcement identifier within the course. |
+| `title` | string | Sanitized plain-text title. |
+| `body` | string or null | Sanitized plain-text body. |
+| `detail_reference` | string | Validated relative reference, returned as data and never fetched. |
+
+Announcement identity is the pair (`course_id`, `announcement_id`).
+`detail_reference` is not an identity guarantee.
+
+`body` is the complete sanitized plain text carried by the established News
+listing response for that returned record, subject to the fail-closed parser
+bounds below. It is not the 120-character human preview. A null body means that
+no readable text remained after sanitization; it does not mean a preview was
+withheld. Body availability and list completeness are separate facts.
+
+## Command envelopes
+
+### Course listing
+
+`d2l courses list --json` returns:
+
+```text
+{"courses": [COURSE, ...]}
+```
+
+`courses` is required and preserves provider order. A provider bookmark that
+would imply another page is a failure rather than a partial success.
+
+### Assignment listing
+
+`d2l assignments list --course <id> --json` returns:
+
+```text
+{"assignments": [ASSIGNMENT, ...]}
+```
+
+Records preserve provider order. With `--include-completeness`, the only
+top-level addition is the required-for-that-mode `completeness` object:
+
+```text
+{
+  "assignments": [ASSIGNMENT, ...],
+  "completeness": ASSIGNMENT_COMPLETENESS
+}
+```
+
+### Cross-course assignment overview
+
+`d2l assignments overview --json` returns:
+
+```text
+{
+  "assignments": [
+    {
+      "id": "string",
+      "course_id": "ASCII decimal-digit string",
+      "course_code": "string",
+      "course_name": "string",
+      "name": "string",
+      "due_date": "timezone-naive ISO-8601 string or null"
+    }
+  ]
+}
+```
+
+The overview intentionally uses this reduced assignment record; it does not
+include `submission_status` or `score`. By default, courses remain in provider
+order and each course's assignments remain in provider order. `--chronological`
+globally sorts recognized due dates earliest first, puts null dates last, and
+preserves original order for ties. `--all-courses` includes inactive accessible
+courses; inaccessible courses are always excluded.
+
+With `--include-completeness`, `course_completeness` is also required and has
+one record per selected course, including selected courses with no assignments:
+
+```text
+{
+  "assignments": [],
+  "course_completeness": [
+    {
+      "course_id": "ASCII decimal-digit string",
+      "course_code": "string",
+      "status": "below_page_size_boundary | potentially_truncated | unknown",
+      "observed_row_count": 0,
+      "page_size_ceiling": "integer or null"
+    }
+  ]
+}
+```
+
+The (`course_id`, `id`) pair remains the assignment identity.
+
+### Grade listing
+
+`d2l grades list --course <id> --json` returns:
+
+```text
+{"grade_items": [GRADE_ITEM, ...]}
+```
+
+Items preserve provider order. With `--include-completeness`, the envelope also
+contains `"completeness": "unknown"`. No verified total, page-size boundary,
+or end marker exists, so `unknown` neither claims completeness nor observed
+truncation.
+
+### Announcement listing
+
+`d2l announcements list --course <id> --json` returns:
+
+```text
+{"announcements": [ANNOUNCEMENT, ...]}
+```
+
+Announcements preserve provider order. `--details` does not change JSON. With
+`--include-completeness`, the envelope also contains `"completeness":
+"unknown"`, with the same evidence-bounded meaning as grade completeness.
+The default human command shortens each body only for terminal presentation;
+`--details`, default JSON, and JSON combined with `--details` all use the same
+complete normalized `body` value. The command never follows
+`detail_reference` or loads embedded resources.
+
+### Unified academic overview
+
+`d2l overview --json` returns `{"courses": [...]}`. Each array entry contains
+exactly these required keys:
+
+| Key | JSON type |
+|---|---|
+| `course` | Course object |
+| `retrieved_assignment_count` | integer |
+| `recognized_due_date_count` | integer |
+| `without_recognized_due_date_count` | integer |
+| `visible_grade_item_count` | integer |
+| `assignment_completeness` | Assignment completeness object |
+| `grade_completeness` | string enum; currently `unknown` |
+| `assignments` | array of Assignment objects |
+| `grade_items` | array of Grade item objects |
+| `retrieved_announcement_count` | integer |
+| `announcement_completeness` | string enum; currently `unknown` |
+| `announcements` | array of Announcement objects |
+
+Counts equal their corresponding returned arrays; the two due-date counts
+partition `assignments`. Course order and each nested provider order are
+preserved. Filtering matches the assignment overview. Any read or association
+failure aborts the entire command: the interface never returns a silently
+partial unified overview.
+
+## Safe subprocess integration
+
+PowerShell should keep the streams separate and test `$LASTEXITCODE` before
+calling `ConvertFrom-Json`:
+
+```powershell
+$stderrPath = Join-Path $env:TEMP "d2l-cli-stderr.txt"
+$jsonLines = & d2l overview --json 2> $stderrPath
+$d2lExit = $LASTEXITCODE
+
+if ($d2lExit -ne 0) {
+    $diagnostic = Get-Content -Raw $stderrPath
+    throw "D2L-CLI failed with exit $d2lExit`: $diagnostic"
+}
+
+$overview = $jsonLines | ConvertFrom-Json
+$overview.courses.Count
+```
+
+Do not invoke through a shell from application code. Pass an argument vector,
+capture stdout and stderr separately, and parse only after success. For example:
+
+```python
+import json
+import subprocess
+
+completed = subprocess.run(
+    ["d2l", "courses", "list", "--json"],
+    check=False,
+    capture_output=True,
+    encoding="utf-8",
+)
+if completed.returncode != 0:
+    raise RuntimeError(f"d2l failed with exit {completed.returncode}")
+courses = json.loads(completed.stdout)["courses"]
+```
+
+Treat returned data and any saved JSON as private academic records. Do not log
+stdout or copy it into exception messages.
+
+All academic strings are untrusted provider data. Announcement title/body
+fields have been converted to safe plain text, and human-facing CLI output is
+terminal-sanitized, but neither property is prompt-injection protection.
+Consumers must not render fields as HTML, execute embedded text or URLs, pass
+them to a shell, or treat their contents as instructions. In particular,
+AI-enabled consumers remain responsible for isolating tool
+output from trusted instructions.
+
+D2L-CLI requests identity content encoding and bounds each HTTP response before
+parsing it. A compressed response or a response over that safety limit is a
+failure (nonzero exit and empty JSON stdout), never a partial-success document.
+Consumers should also set a subprocess timeout and a reasonable captured-output
+limit because a multi-course overview can make several bounded requests and
+valid academic output size is not itself an API guarantee.
+
+### Output-size characteristics
+
+- Every HTTP response is limited to 25,000,000 identity-encoded bytes before a
+  provider parser receives it.
+- An announcement listing is additionally limited to 5,000,000 decoded
+  characters. Each embedded announcement body is limited to 200,000 HTML input
+  characters and 100,000 sanitized plain-text characters. Exceeding a bound
+  fails the command; no prefix or partial JSON document is emitted.
+- The CLI does not silently shorten machine-readable academic strings. JSON
+  escaping and record aggregation mean stdout size is not equal to source text
+  length. Cross-course overview output can be larger than any individual
+  provider response.
+- A consumer capture limit is therefore an independent safety boundary. If a
+  complete successful document exceeds that boundary, the consumer should
+  reject the invocation as oversized rather than parse the captured prefix.
+
+## Compatibility expectations
+
+The regression suite pins envelopes, required record keys, nullable values,
+empty results, ordering, completeness states, course associations, Unicode
+round trips, stream separation, and exit behavior using fictional fixtures.
+It performs no live Brightspace requests.
+
+Within the 0.1 release-candidate line, fields will not be removed, renamed, or
+given a different type or meaning without an explicit compatibility decision.
+Completeness fields remain opt-in where documented. New fields are not added
+silently: the exact-key contract tests force a deliberate review first.
+Consumers should still reject unsupported types and enum values cleanly and
+should not infer undocumented semantics from strings or array positions.

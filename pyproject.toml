@@ -1,0 +1,75 @@
+[project]
+name = "d2l-cli"
+version = "0.1.0"
+description = "Read-only command-line client for a student's own Brightspace/D2L account."
+readme = "README.md"
+keywords = ["brightspace", "d2l", "cli", "student", "read-only"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Education",
+]
+authors = [
+    { name = "webswe" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "certifi>=2026.10.19",
+    "httpx>=0.28.1",
+    "keyring>=25.6.0",
+    "playwright>=1.63.0",
+    "typer>=0.27.2",
+]
+
+license = "MIT"
+license-files = ["LICENSE"]
+
+[project.urls]
+Homepage = "https://github.com/webswe/d2l-student-cli"
+Repository = "https://github.com/webswe/d2l-student-cli"
+Issues = "https://github.com/webswe/d2l-student-cli/issues"
+Changelog = "https://github.com/webswe/d2l-student-cli/blob/main/CHANGELOG.md"
+Security = "https://github.com/webswe/d2l-student-cli/blob/main/SECURITY.md"
+
+[project.scripts]
+d2l = "d2l_cli:main"
+
+[build-system]
+requires = ["uv_build>=0.11.32,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "mypy>=2.3.1",
+    "pytest>=9.1.1",
+    "pytest-mock>=3.15.1",
+    "respx>=0.23.1",
+    "ruff>=0.16.8",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Several tests import sibling modules as ``tests.<name>``; make that work for a bare ``pytest``.
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "S"]
+ignore = ["S101"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "S105", "S106"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["src"]

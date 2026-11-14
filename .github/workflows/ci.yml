@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Read-only by default. No job needs more, and no secrets are used anywhere.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_VERSION: "0.11.32"
+
+jobs:
+  test:
+    name: Tests (Windows, Python ${{ matrix.python }})
+    runs-on: windows-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+      - name: Verify lockfile is current
+        run: uv lock --check
+      - name: Install locked dependencies
+        run: uv sync --locked --python ${{ matrix.python }}
+      - name: Lint
+        run: uv run ruff check .
+      - name: Type check (strict)
+        run: uv run mypy
+      - name: Offline test suite (fictional fixtures, mocked boundaries)
+        run: uv run pytest -q
+      - name: CLI smoke test
+        shell: pwsh
+        run: |
+          uv run d2l --version
+          if ($LASTEXITCODE -ne 0) { throw "--version failed ($LASTEXITCODE)" }
+          uv run d2l --help
+          if ($LASTEXITCODE -ne 0) { throw "--help failed ($LASTEXITCODE)" }
+          uv run d2l grades list   # missing --course must be a usage error
+          if ($LASTEXITCODE -ne 2) { throw "expected usage exit code 2, got $LASTEXITCODE" }
+          $global:LASTEXITCODE = 0
+
+  package:
+    name: Build and inspect distributions
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+      - name: Build wheel and sdist
+        run: uv build --out-dir dist-ci
+      - name: Inspect distribution contents and metadata
+        run: uv run --no-project python scripts/verify_dist.py dist-ci
+      - name: Install the wheel into an isolated environment and run the entry point
+        shell: pwsh
+        run: |
+          uv venv wheel-env --python 3.11
+          uv pip install --python wheel-env\Scripts\python.exe (Get-ChildItem dist-ci\*.whl).FullName
+          wheel-env\Scripts\d2l.exe --version
+          if ($LASTEXITCODE -ne 0) { throw "--version failed" }
+          wheel-env\Scripts\d2l.exe --help
+          if ($LASTEXITCODE -ne 0) { throw "--help failed" }
+          $global:LASTEXITCODE = 0
+
+  advisories:
+    name: Dependency advisory audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+      - name: Export the locked runtime dependencies
+        run: uv export --frozen --no-dev --no-emit-project --no-hashes -o runtime-requirements.txt
+      - name: Audit against the PyPI advisory database
+        run: uvx pip-audit==2.10.1 -r runtime-requirements.txt --no-deps --disable-pip
