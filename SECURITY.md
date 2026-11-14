@@ -22,7 +22,9 @@ No absolute security is claimed. Sessions are stored in Windows Credential
 Manager, which protects them from other Windows users but **not** from malware
 or another process running as you. The stored Brightspace session is not
 read-only even though this tool only issues GET requests; treat it like a
-logged-in browser session. Text sanitization does not stop prompt injection:
+logged-in browser session. A stored session is bound to the origin it was created for and is
+refused for any other configured site, but that does not help against software running as you
+that reads the entry directly. Text sanitization does not stop prompt injection:
 downstream AI tools must treat academic text as data, not instructions.
 
 ## Reporting a vulnerability

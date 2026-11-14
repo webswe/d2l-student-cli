@@ -126,7 +126,7 @@ _ANNOUNCEMENT_PREVIEW_CHARS = 120
 
 
 def _build_auth_service(config: Config) -> AuthService:
-    session_store = SessionStore(KeyringCredentialStore())
+    session_store = SessionStore(KeyringCredentialStore(), origin=config.base_url)
     browser_auth = BrowserAuth()
 
     def verify_session(headers: Mapping[str, str]) -> None:
@@ -413,8 +413,8 @@ def _load_cli_config() -> Config:
 
 @auth_app.command("login")
 def auth_login() -> None:
-    """Launch an isolated browser to complete SSO/MFA and store the
-    resulting session securely."""
+    """Launch an isolated browser to complete SSO/MFA and store the resulting session securely,
+    bound to the configured site."""
     config = _load_cli_config()
     service = _build_auth_service(config)
     try:

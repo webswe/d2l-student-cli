@@ -82,7 +82,9 @@ def _store(fake: _Keyring) -> SessionStore:
         delete_password=fake.delete_password,
         errors=fake.errors,
     )
-    return SessionStore(KeyringCredentialStore(keyring_module=module))
+    return SessionStore(
+        KeyringCredentialStore(keyring_module=module), origin="https://school.example.edu"
+    )
 
 
 def _material() -> SessionMaterial:

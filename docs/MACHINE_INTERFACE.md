@@ -53,8 +53,12 @@ normalized records retrieved by the command.
 Authentication is a prerequisite. The user must first run `d2l auth login` and
 complete institutional SSO/MFA interactively. External applications must not
 automate that browser interaction or handle a password or MFA code. `d2l auth
-status` is human-readable, makes one verification request, and is not a JSON
-command unless `--json` is explicitly requested.
+status` is human-readable and makes one verification request; it has no JSON mode.
+
+The stored session is bound to the origin it was created for. If the configured base URL
+(`D2L_CLI_BASE_URL`) is a different origin, or the stored record has no recorded origin, every
+command exits with status 1 and an `error:` line on stderr asking the user to log in again,
+stdout stays empty, and no request is sent to any site.
 
 ## Shared record schemas
 

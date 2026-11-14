@@ -138,3 +138,25 @@ The following boundaries were re-audited against fictional adversarial inputs:
 - Dependency advisory scans are point-in-time evidence. The lockfile and
   published advisories must be rechecked for every release.
 
+## Origin-bound stored session
+
+The stored session is a `Cookie` header that this application attaches itself, so possession of
+the stored value must never be treated as permission to send it somewhere. The record therefore
+names the canonical origin (scheme, host, effective port) it was created for, and
+`SessionStore.load()` in `src/d2l_cli/session_store.py` returns the cookies only if the configured
+origin is exactly that one. The comparison reuses the HTTP client's own URL validation
+(`canonical_origin` in `src/d2l_cli/client/http.py`), so there is one definition of an acceptable
+site and of when two sites are the same origin.
+
+- **Threat:** a changed `D2L_CLI_BASE_URL` (a mistake, or a hostile environment) would otherwise
+  send the previous site's session cookies to the new host.
+- **Control:** every authenticated command and `auth status` load the session through the same
+  check, before any request is built. A mismatch, a record without an origin, an unsupported
+  format version and a corrupt record all fail closed with a privacy-safe message and no network
+  request. Messages never contain cookie text or either origin.
+- **Not done automatically:** the record is not deleted, migrated or repaired; a successful
+  `d2l auth login` overwrites it.
+- **Residual:** one session slot exists per Windows user, so logging in to a second site replaces
+  the first. Software running as the same Windows user can still read the entry directly.
+- **Tests:** `tests/test_session_store.py` and `tests/test_session_origin_binding.py` record every
+  request the mocked transport sees and assert that none reaches a second origin.

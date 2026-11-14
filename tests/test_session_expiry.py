@@ -35,7 +35,7 @@ from d2l_cli.providers.brightspace_assignments import BrightspaceAssignmentProvi
 from d2l_cli.providers.brightspace_courses import BrightspaceCourseProvider
 from d2l_cli.secret import SecretStr
 from d2l_cli.session_bridge import SessionMaterial
-from d2l_cli.session_store import SessionStore
+from tests.session_helpers import make_session_store
 
 BASE_URL = "https://example.brightspace.com"
 HOST = "example.brightspace.com"
@@ -441,9 +441,9 @@ class _MemoryStore:
         self.data.pop(key, None)
 
 
-def _seeded_store() -> _MemoryStore:
+def _seeded_store(base_url: str = BASE_URL) -> _MemoryStore:
     store = _MemoryStore()
-    SessionStore(store).save(
+    make_session_store(store, base_url).save(
         SessionMaterial(
             cookie_header=SecretStr(f"d2lSessionVal={COOKIE_SENTINEL}"),
             cookie_names=("d2lSessionVal",),
@@ -461,7 +461,9 @@ def _real_auth_service(store: _MemoryStore, base_url: str) -> AuthService:
             client.close()
 
     return AuthService(
-        session_store=SessionStore(store), browser_auth=BrowserAuth(), verify_session=verify
+        session_store=make_session_store(store, base_url),
+        browser_auth=BrowserAuth(),
+        verify_session=verify,
     )
 
 
@@ -528,7 +530,7 @@ def _assert_clean(output: str) -> None:
 def test_cli_auth_status_reports_session_expired_not_provider_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store = _seeded_store()
+    store = _seeded_store(KSU_BASE_URL)
     monkeypatch.setattr(cli_module, "KeyringCredentialStore", lambda: store)
     respx.get(f"{KSU_BASE_URL}/d2l/le/manageCourses/api/mycourses").mock(
         return_value=_interstitial()
@@ -540,7 +542,7 @@ def test_cli_auth_status_reports_session_expired_not_provider_unavailable(
     assert result.stdout.startswith("session_expired:")
     assert "provider_unavailable" not in result.stdout
     _assert_clean(result.stdout + result.stderr)
-    assert store.data == _seeded_store().data  # credentials untouched
+    assert store.data == _seeded_store(KSU_BASE_URL).data  # credentials untouched
 
 
 @respx.mock

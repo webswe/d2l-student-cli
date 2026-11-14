@@ -13,6 +13,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from d2l_cli.client.http import canonical_origin
+
 DEFAULT_BASE_URL = "https://kennesaw.view.usg.edu/"
 
 
@@ -22,5 +24,11 @@ class Config:
 
 
 def load_config() -> Config:
-    """Load configuration: an optional ``D2L_CLI_BASE_URL`` override of the default site."""
-    return Config(base_url=os.environ.get("D2L_CLI_BASE_URL", DEFAULT_BASE_URL))
+    """Load configuration: an optional ``D2L_CLI_BASE_URL`` override of the default site.
+
+    The value is validated here, before any credential is read, so an unsafe or malformed site
+    is reported cleanly instead of reaching the credential store or the network.
+    """
+    base_url = os.environ.get("D2L_CLI_BASE_URL", DEFAULT_BASE_URL)
+    canonical_origin(base_url)
+    return Config(base_url=base_url)

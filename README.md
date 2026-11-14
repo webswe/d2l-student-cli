@@ -100,16 +100,23 @@ accepted. A locally present session is not reported as authenticated unless that
 ### What is stored, and what it is bound to
 
 - **Stored:** the cookies Chromium holds for the configured Brightspace origin, as one `Cookie`
-  header value plus the cookie names, in a single Windows Credential Manager entry (service
-  `d2l-student-cli`, key `session`). Cookies for other sites are not captured. No password or MFA
-  code is stored, and nothing is written to a file.
+  header value plus the cookie names, together with a format version and the origin they belong
+  to, in a single Windows Credential Manager entry (service `d2l-student-cli`, key `session`).
+  Cookies for other sites are not captured. No password or MFA code is stored, and nothing is
+  written to a file.
 - **Isolated:** that service name belongs to this project. This tool does not read, overwrite or
   delete entries that belong to other applications, and there is no automatic migration of
   credentials from anywhere else.
-- **Not origin-bound:** the entry records no origin. Every command sends the stored cookies to
-  whatever origin is configured (the default, or `D2L_CLI_BASE_URL`). If you change the base URL,
-  run `d2l auth login` again, and do not point the tool at a host you do not trust while a session
-  is stored, because the stored cookies would be sent there.
+- **Bound to one origin:** the entry records the canonical origin the session was created for
+  (`https://host`, plus the port when it is not 443). Before any request is built, the CLI checks
+  that the configured site is exactly that origin: same scheme, host and effective port. A
+  different case, a trailing `/` or an explicit `:443` is the same origin; a different host, a
+  subdomain, a different port or `http` is not. On a mismatch the command stops without
+  contacting any site and tells you to log in again; the stored cookies are never sent to another
+  origin. Changing `D2L_CLI_BASE_URL` therefore requires a fresh `d2l auth login`, which replaces
+  the stored session.
+- **Older records:** a record written by a pre-release build has no recorded origin and cannot be
+  reused. Run `d2l auth login` once; nothing is deleted, migrated or repaired automatically.
 - **Expiry:** an expired session is detected from the provider's login redirect, and the command
   stops with a "log in again" error and a non-zero exit code. Nothing is renewed or deleted
   automatically.
@@ -388,9 +395,9 @@ uv run d2l auth login
 ```
 
 Remove a temporary override with
-`Remove-Item Env:D2L_CLI_BASE_URL`. A stored session is not bound to the origin it was
-saved for: run `d2l auth login` again after changing the base URL, and see "What is stored,
-and what it is bound to" above.
+`Remove-Item Env:D2L_CLI_BASE_URL`. A stored session is bound to the origin it was created
+for: after changing the base URL, run `d2l auth login` again. The CLI refuses to use a session
+that belongs to another site (see "What is stored, and what it is bound to" above).
 
 ## Troubleshooting
 

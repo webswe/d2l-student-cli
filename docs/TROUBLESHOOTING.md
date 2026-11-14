@@ -9,6 +9,9 @@ page contents, cookies or screenshots.
 | `d2l` does not launch or a module is missing | The environment is not synced. | From the repository root run `uv sync --locked`, then `uv run d2l --help`. |
 | Playwright reports that the Chromium executable is missing | The browser is a separate download. | Run `uv run playwright install chromium`. |
 | "no stored session", "session has expired", or an unexpected login redirect | There is no valid saved session. | Run `uv run d2l auth login`, complete SSO/MFA by hand, then `uv run d2l auth status`. |
+| "stored session was created for a different site than the configured one" | The base URL (`D2L_CLI_BASE_URL` or the default) is not the origin the saved session belongs to. No request was sent. | Run `uv run d2l auth login` for the configured site, or restore the original base URL. A session is never reused for another origin. |
+| "stored session has no recorded site and cannot be reused" | The saved session was written by a pre-release build that did not record its origin. | Run `uv run d2l auth login` once; the new session replaces it. |
+| "stored session format is not supported" or "stored session is corrupt" | The saved record is not in the expected format. | Run `uv run d2l auth login` to replace it. |
 | `no trusted OS-backed credential store is available` | Windows Credential Manager is not the active keyring backend. | Run on Windows with Credential Manager available. The CLI deliberately refuses plaintext or third-party fallback keyrings. |
 | The base URL is rejected | Only a plain HTTPS origin is accepted. | Use for example `https://learn.example.edu`; remove paths, query strings, fragments and credentials. |
 | A course identifier is rejected | Names and codes are not identifiers. | Use the numeric `id` from `d2l courses list --json`. |

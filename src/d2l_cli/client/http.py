@@ -120,6 +120,17 @@ def _parse_base_url(base_url: str) -> httpx.URL:
     return url
 
 
+def canonical_origin(base_url: str) -> str:
+    """The canonical origin (``https://host`` or ``https://host:port``) of a validated base URL.
+
+    Reuses ``_parse_base_url`` and ``_origin_of`` so there is a single definition of which URLs
+    are acceptable and of when two of them are the same origin: scheme, host and effective port
+    only. Raises ``InvalidBaseURLError`` for anything the HTTP client itself would reject.
+    """
+    scheme, host, port = _origin_of(_parse_base_url(base_url))
+    return f"{scheme}://{host}" if port == _HTTPS_DEFAULT_PORT else f"{scheme}://{host}:{port}"
+
+
 class D2LResponse:
     """A minimal, safe wrapper around the provider's JSON response."""
 

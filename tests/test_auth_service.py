@@ -13,7 +13,7 @@ from d2l_cli.client.errors import (
     UnexpectedProviderError,
 )
 from d2l_cli.secret import SecretStr
-from d2l_cli.session_store import SessionStore
+from tests.session_helpers import make_session_store
 
 BASE_URL = "https://example.brightspace.com/"
 
@@ -74,7 +74,7 @@ def _service(
     verify_session: object = None,
 ) -> tuple[AuthService, FakeCredentialStore, FakeBrowserAuth]:
     backend = credential_store or FakeCredentialStore()
-    session_store = SessionStore(backend)
+    session_store = make_session_store(backend, BASE_URL)
     browser_auth = FakeBrowserAuth(browser_result)
 
     def default_verify(headers: Mapping[str, str]) -> None:

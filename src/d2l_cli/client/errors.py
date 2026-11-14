@@ -114,6 +114,11 @@ class CredentialPortalMismatchError(CredentialReadError):
     """A v2 record names a different valid canonical portal origin."""
 
 
+class SessionOriginMissingError(CredentialReadError):
+    """A stored session record names no origin, so it cannot be proven to belong to the
+    configured one and is never reused."""
+
+
 class UnsupportedCredentialVersionError(CredentialReadError):
     """A v2 record uses an unsupported integer format version."""
 
