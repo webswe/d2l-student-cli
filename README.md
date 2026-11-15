@@ -6,6 +6,15 @@ University's Brightspace. Unofficial: not affiliated with or endorsed by D2L
 Corporation or any university. Not a general-purpose Brightspace client —
 scoped narrowly to what one student needs to read their own data.
 
+> **Public beta (source preview).** This repository is a beta of the standalone command-line tool.
+> Stable v0.1.0 has not been released or tagged, and there is no PyPI package or installer: install
+> from source as described below. Windows is the only validated operating system, and Kennesaw State
+> University is the only institution validated against a live deployment; other institutions are not
+> guaranteed to work. Syllabus retrieval (PDF, Word `.docx`, plain text) is covered by offline tests only
+> and has not been independently confirmed against a live institution. Every Brightspace operation is
+> read-only, and you complete SSO and MFA yourself. Report bugs through GitHub Issues, and never post
+> credentials, cookies, session data or personal academic data in an issue.
+
 ## Who it is for and what is supported
 
 For a student who wants to read their **own** courses, assignments, visible grades,
