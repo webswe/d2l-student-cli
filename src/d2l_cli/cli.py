@@ -1274,8 +1274,12 @@ def _quiz_attempt_to_json(attempt: QuizAttempt) -> dict[str, Any]:
         "started": attempt.started,
         "completed": attempt.completed,
         "status": attempt.status.value,
-        "score": attempt.score,
-        "score_released": attempt.score_released,
+        "attempt_completed": attempt.attempt_completed,
+        "feedback_published": attempt.feedback_published,
+        # Release of the numeric score is not documented, so it is never shown: null = not
+        # established (not zero, not withheld by the instructor).
+        "score_released": None,
+        "score": None,
     }
 
 
@@ -1367,12 +1371,14 @@ def quizzes_attempts(
         False, "--json", help="Emit machine-readable JSON only (to stdout)."
     ),
 ) -> None:
-    """Show your own attempt summaries for one quiz.
+    """Show your own attempt summaries for one quiz (experimental).
 
-    A score appears only when the provider marks the attempt as released. If the provider
-    returns attempts of more than one user the command refuses to show any of them. No attempt
-    feedback, questions or answers are requested. "No attempts returned" does not prove the quiz
-    was never attempted.
+    Your identity is verified first (``whoami``); attempts are then requested for that user id
+    only, and every returned record must carry it, or nothing is shown and the command fails. No
+    fallback to an unfiltered request exists. ``feedback_published`` is the provider's flag that
+    feedback is visible to you; the numeric score is never shown because its release rule is
+    undocumented. No feedback, questions or answers are requested. "No attempts returned" does not
+    prove the quiz was never attempted.
     """
     config = _load_cli_config()
     auth = _build_auth_service(config)
@@ -1404,10 +1410,11 @@ def quizzes_attempts(
         return
     for attempt in listing.attempts:
         number = "-" if attempt.attempt_number is None else str(attempt.attempt_number)
-        score = "score withheld" if attempt.score is None else f"score {attempt.score:g}"
+        feedback = {True: "yes", False: "no", None: "unknown"}[attempt.feedback_published]
         typer.echo(
             f"attempt {number}\t{attempt.status.value}\tstarted {attempt.started or '-'}"
-            f"\tcompleted {attempt.completed or '-'}\t{score}"
+            f"\tcompleted {attempt.completed or '-'}\tfeedback published {feedback}"
+            "\tscore not shown"
         )
 
 

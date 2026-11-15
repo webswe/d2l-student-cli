@@ -3,15 +3,19 @@
 Routes (documented Valence ``le`` quiz API, LE version 1.82 or later):
 
 * ``GET /d2l/api/le/{version}/{orgUnitId}/quizzes/`` (scope ``quizzing:quizzes:read``)
-* ``GET /d2l/api/le/{version}/{orgUnitId}/quizzes/{quizId}/attempts/`` (scope
+* ``GET /d2l/api/le/{version}/{orgUnitId}/quizzes/{quizId}/attempts/?userId={id}`` (scope
   ``quizzing:attempts:read``)
 
-Deliberately NOT used: the ``questions`` routes (they expose answer options), attempt feedback,
-and any route that starts, answers or submits a quiz. The documentation does not say whether a
-student role may call the attempts route, so a permission denial is surfaced as an error and an
-empty listing is never read as "no attempts". Attempts are not filtered by ``userId`` (the CLI does
-not know the user id); instead a response that mixes more than one user is refused, so another
-person's attempts can never be shown. Not confirmed against a live tenant; see
+Deliberately NOT used: the ``questions`` routes (they expose answer options), attempt feedback
+routes, and any route that starts, answers or submits a quiz.
+
+Ownership: the unfiltered attempts route returns attempts "for the quiz generally", so a response
+that merely lacks conflicting user ids proves nothing. Attempts are therefore requested only
+after the signed-in user's id has been verified (``BrightspaceIdentityProvider``), with that id as
+the documented ``userId`` filter, and every returned record must itself carry exactly that
+``UserId``. There is no fallback to an unfiltered request. ``IsPublished`` is documented as "the
+attempt feedback is available to the student" and is reported as ``feedback_published`` only; the
+undocumented ``Score`` is never exposed. Not confirmed against a live tenant; see
 docs/ACTIVITIES.md.
 """
 
@@ -28,6 +32,7 @@ from d2l_cli.models.quiz import (
     QuizListing,
 )
 from d2l_cli.providers import valence_common as v
+from d2l_cli.providers.brightspace_identity import BrightspaceIdentityProvider
 
 _LABEL = "Quiz"
 MAX_QUIZZES = 2_000
@@ -110,76 +115,75 @@ def parse_quizzes(payload: object, *, course_id: str) -> QuizListing:
     return QuizListing(course_id=course_id, quizzes=tuple(quizzes), has_more=has_next)
 
 
-def _number(value: object) -> float | None:
+def _score_is_valid(value: object) -> None:
+    """``Score`` is undocumented (no meaning, no release rule). It is checked and never exposed."""
     if value is None:
-        return None
+        return
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise v.changed(_LABEL, "SCORE")
     if value != value or value in (float("inf"), float("-inf")):  # NaN / infinity
         raise v.changed(_LABEL, "SCORE")
-    return float(value)
 
 
-def parse_attempt(node: dict[str, Any], *, quiz_id: str) -> tuple[QuizAttempt, str | None]:
-    """The attempt summary plus its (never displayed) user id, used only to refuse mixed users."""
+def parse_attempt(node: dict[str, Any], *, quiz_id: str, user_id: str) -> QuizAttempt:
+    """One attempt, only if it provably belongs to ``user_id`` and to ``quiz_id``.
+
+    ``user_id`` is the id verified for the current session. A missing or different ``UserId``,
+    or a different ``QuizId``, rejects the whole response: ownership is never assumed.
+    """
     if v.id_of(node.get("QuizId"), _LABEL, "ATTEMPT_QUIZ") != quiz_id:
         raise v.changed(_LABEL, "QUIZ_MISMATCH")
-    user = node.get("UserId")
-    user_id = None if user is None else v.id_of(user, _LABEL, "USER_ID")
+    if node.get("UserId") is None:
+        raise v.changed(_LABEL, "ATTEMPT_OWNER_MISSING")
+    if v.id_of(node["UserId"], _LABEL, "ATTEMPT_OWNER") != user_id:
+        raise v.changed(_LABEL, "ATTEMPT_OWNER_MISMATCH")
     started = v.utc_datetime(node.get("Started"), _LABEL, "STARTED")
     completed = v.utc_datetime(node.get("Completed"), _LABEL, "COMPLETED")
-    released = _flag(node, "IsPublished", "PUBLISHED_FLAG")
-    score = _number(node.get("Score"))
+    published = _flag(node, "IsPublished", "PUBLISHED_FLAG")
+    _score_is_valid(node.get("Score"))
     if completed is not None:
         status = AttemptStatus.COMPLETED
     elif started is not None:
         status = AttemptStatus.IN_PROGRESS
     else:
         status = AttemptStatus.UNKNOWN
-    return (
-        QuizAttempt(
-            attempt_id=v.id_of(node.get("AttemptId"), _LABEL, "ATTEMPT_ID"),
-            quiz_id=quiz_id,
-            attempt_number=_bounded_int(
-                node.get("AttemptNumber"), "ATTEMPT_NUMBER", maximum=10_000
-            ),
-            started=started,
-            completed=completed,
-            status=status,
-            # A score is shown only when the provider marks the attempt released.
-            score=score if released is True else None,
-            score_released=released,
-        ),
-        user_id,
+    return QuizAttempt(
+        attempt_id=v.id_of(node.get("AttemptId"), _LABEL, "ATTEMPT_ID"),
+        quiz_id=quiz_id,
+        attempt_number=_bounded_int(node.get("AttemptNumber"), "ATTEMPT_NUMBER", maximum=10_000),
+        started=started,
+        completed=completed,
+        status=status,
+        attempt_completed=completed is not None,
+        feedback_published=published,
     )
 
 
-def parse_attempts(payload: object, *, course_id: str, quiz_id: str) -> AttemptListing:
+def parse_attempts(
+    payload: object, *, course_id: str, quiz_id: str, user_id: str
+) -> AttemptListing:
     items, has_next = v.object_page(payload, _LABEL, max_items=MAX_ATTEMPTS)
     attempts: list[QuizAttempt] = []
-    users: set[str] = set()
     seen: set[str] = set()
     for item in items:
-        attempt, user_id = parse_attempt(item, quiz_id=quiz_id)
+        attempt = parse_attempt(item, quiz_id=quiz_id, user_id=user_id)
         if attempt.attempt_id in seen:
             raise v.changed(_LABEL, "DUPLICATE_ATTEMPT")
         seen.add(attempt.attempt_id)
-        if user_id is not None:
-            users.add(user_id)
         attempts.append(attempt)
-    if len(users) > 1:
-        # We cannot tell which user is the signed-in student, so show none of them.
-        raise v.changed(_LABEL, "OTHER_USERS_ATTEMPTS")
     return AttemptListing(
         course_id=course_id, quiz_id=quiz_id, attempts=tuple(attempts), has_more=has_next
     )
 
 
 class BrightspaceQuizProvider:
-    """Read quiz metadata and the signed-in student's own attempt summaries."""
+    """Read quiz metadata and the verified signed-in student's own attempt summaries."""
 
-    def __init__(self, client: D2LHttpClient) -> None:
+    def __init__(
+        self, client: D2LHttpClient, identity: BrightspaceIdentityProvider | None = None
+    ) -> None:
         self._client = client
+        self._identity = identity or BrightspaceIdentityProvider(client)
         self._version: str | None = None
 
     def api_version(self) -> str:
@@ -194,7 +198,15 @@ class BrightspaceQuizProvider:
         return parse_quizzes(self._client.get(path).json_body, course_id=course)
 
     def list_attempts(self, course_id: str, quiz_id: str) -> AttemptListing:
+        """Attempts of the verified current user only, or an error; never an unfiltered list.
+
+        Order is fixed: validate ids, verify who is signed in, then request attempts filtered to
+        that user id, then check every returned record against that same id. If the identity
+        cannot be verified no attempts request is made at all.
+        """
         course = v.require_id(course_id, "course_id")
         quiz = v.require_id(quiz_id, "quiz_id")
+        user_id = self._identity.current_user_id()
         path = f"/d2l/api/le/{self.api_version()}/{course}/quizzes/{quiz}/attempts/"
-        return parse_attempts(self._client.get(path).json_body, course_id=course, quiz_id=quiz)
+        payload = self._client.get(path, params={"userId": user_id}).json_body
+        return parse_attempts(payload, course_id=course, quiz_id=quiz, user_id=user_id)

@@ -69,10 +69,21 @@ def id_of(value: object, label: str, code: str) -> str:
 
 def select_le_version(payload: object, label: str) -> str:
     """The newest documented ``le`` version inside ``1.MIN_MINOR..1.MAX_MINOR``, or fail closed."""
+    return select_product_version(payload, label, PRODUCT_CODE, MIN_MINOR, MAX_MINOR)
+
+
+def select_product_version(
+    payload: object, label: str, product: str, minimum: int, maximum: int
+) -> str:
+    """The newest version of ``product`` listed between ``1.minimum`` and ``1.maximum``.
+
+    Product version numbers are independent (the ``lp`` and ``le`` families do not share a
+    numbering), so each caller states its own documented floor.
+    """
     if not isinstance(payload, list):
         raise changed(label, "VERSIONS_SHAPE")
     for entry in payload:
-        if not isinstance(entry, dict) or entry.get("ProductCode") != PRODUCT_CODE:
+        if not isinstance(entry, dict) or entry.get("ProductCode") != product:
             continue
         supported = entry.get("SupportedVersions")
         if not isinstance(supported, list) or not all(isinstance(v, str) for v in supported):
@@ -80,12 +91,17 @@ def select_le_version(payload: object, label: str) -> str:
         usable: list[int] = []
         for version in supported:
             match = _VERSION_RE.fullmatch(version)
-            if match and MIN_MINOR <= int(match.group(1)) <= MAX_MINOR:
+            if match and minimum <= int(match.group(1)) <= maximum:
                 usable.append(int(match.group(1)))
         if not usable:
             raise changed(label, "VERSION_UNSUPPORTED")
         return f"1.{max(usable)}"
     raise changed(label, "VERSION_UNSUPPORTED")
+
+
+def minor_of(version: str) -> int:
+    """The minor number of a ``1.NN`` version string chosen by ``select_product_version``."""
+    return int(version.split(".", 1)[1])
 
 
 def object_page(

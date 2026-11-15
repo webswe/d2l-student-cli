@@ -16,12 +16,19 @@ from typer.testing import CliRunner
 
 import d2l_cli.cli as cli_module
 from d2l_cli.client.errors import (
+    IdentityUnverifiedError,
     NotAuthenticatedError,
     PermissionDeniedError,
     ProviderEndpointChangedError,
+    RateLimitedError,
 )
 from d2l_cli.client.http import D2LHttpClient
 from d2l_cli.models.quiz import AttemptListing, AttemptStatus, QuizListing
+from d2l_cli.providers.brightspace_identity import (
+    IDENTITY_UNVERIFIED_MESSAGE,
+    BrightspaceIdentityProvider,
+    parse_whoami,
+)
 from d2l_cli.providers.brightspace_quizzes import (
     BrightspaceQuizProvider,
     parse_attempts,
@@ -152,84 +159,236 @@ def test_more_pages_mark_the_listing_incomplete() -> None:
     assert listing.has_more and not listing.complete
 
 
-# --- attempts: privacy and honesty ---------------------------------------------------------------
+# --- attempts: ownership and release semantics ---------------------------------------------------
+
+ME = "9001"
 
 
-def test_a_score_is_shown_only_when_the_provider_releases_it() -> None:
-    released = parse_attempts([raw_attempt(1)], course_id=COURSE, quiz_id=QUIZ).attempts[0]
-    withheld = parse_attempts(
-        [raw_attempt(1, IsPublished=False)], course_id=COURSE, quiz_id=QUIZ
-    ).attempts[0]
-    unknown = parse_attempts(
-        [raw_attempt(1, IsPublished=None)], course_id=COURSE, quiz_id=QUIZ
-    ).attempts[0]
-    assert (released.score, released.score_released) == (8.5, True)
-    assert (withheld.score, withheld.score_released) == (None, False)
-    assert (unknown.score, unknown.score_released) == (None, None)
+def attempts_of(payload: object) -> AttemptListing:
+    return parse_attempts(payload, course_id=COURSE, quiz_id=QUIZ, user_id=ME)
+
+
+def test_feedback_publication_is_reported_but_never_as_a_released_score() -> None:
+    published = attempts_of([raw_attempt(1)]).attempts[0]
+    unpublished = attempts_of([raw_attempt(1, IsPublished=False)]).attempts[0]
+    unknown = attempts_of([raw_attempt(1, IsPublished=None)]).attempts[0]
+    assert (published.feedback_published, unpublished.feedback_published) == (True, False)
+    assert unknown.feedback_published is None
+    for attempt in (published, unpublished, unknown):
+        assert not hasattr(attempt, "score") and not hasattr(attempt, "score_released")
+        assert "8.5" not in repr(attempt)
+
+
+@pytest.mark.parametrize("score", [None, 0, 0.0, 8.5, 100])
+@pytest.mark.parametrize("published", [True, False, None])
+def test_no_combination_of_score_and_publication_exposes_a_score(
+    score: float | None, published: bool | None
+) -> None:
+    attempt = attempts_of([raw_attempt(1, Score=score, IsPublished=published)]).attempts[0]
+    assert not hasattr(attempt, "score") and not hasattr(attempt, "score_released")
 
 
 @pytest.mark.parametrize(
-    ("started", "completed", "status"),
+    ("started", "completed", "status", "done"),
     [
-        ("2026-03-10T15:00:00Z", "2026-03-10T15:30:00Z", AttemptStatus.COMPLETED),
-        ("2026-03-10T15:00:00Z", None, AttemptStatus.IN_PROGRESS),
-        (None, None, AttemptStatus.UNKNOWN),
+        ("2026-03-10T15:00:00Z", "2026-03-10T15:30:00Z", AttemptStatus.COMPLETED, True),
+        ("2026-03-10T15:00:00Z", None, AttemptStatus.IN_PROGRESS, False),
+        (None, None, AttemptStatus.UNKNOWN, False),
     ],
 )
 def test_attempt_status_reflects_only_what_the_record_shows(
-    started: str | None, completed: str | None, status: AttemptStatus
+    started: str | None, completed: str | None, status: AttemptStatus, done: bool
 ) -> None:
-    node = raw_attempt(1, Started=started, Completed=completed)
-    assert parse_attempts([node], course_id=COURSE, quiz_id=QUIZ).attempts[0].status is status
+    node = raw_attempt(1, Started=started, Completed=completed, Score=5)
+    attempt = attempts_of([node]).attempts[0]
+    assert attempt.status is status and attempt.attempt_completed is done
 
 
-def test_attempt_feedback_and_user_ids_never_reach_the_model() -> None:
-    attempt = parse_attempts([raw_attempt(1)], course_id=COURSE, quiz_id=QUIZ).attempts[0]
-    assert "SECRET" not in repr(attempt) and "9001" not in repr(attempt)
+def test_a_completed_attempt_is_not_a_published_grade() -> None:
+    attempt = attempts_of([raw_attempt(1, IsPublished=False)]).attempts[0]
+    assert attempt.attempt_completed is True and attempt.feedback_published is False
+
+
+def test_feedback_and_user_ids_never_reach_the_model() -> None:
+    attempt = attempts_of([raw_attempt(1)]).attempts[0]
+    assert "SECRET" not in repr(attempt) and ME not in repr(attempt)
     assert not hasattr(attempt, "feedback") and not hasattr(attempt, "user_id")
 
 
-def test_a_response_mixing_several_users_is_refused_entirely() -> None:
-    payload = [raw_attempt(1, UserId=9001), raw_attempt(2, UserId=9002)]
-    with pytest.raises(ProviderEndpointChangedError, match="OTHER_USERS_ATTEMPTS"):
-        parse_attempts(payload, course_id=COURSE, quiz_id=QUIZ)
+@pytest.mark.parametrize(
+    ("node", "code"),
+    [
+        (raw_attempt(1, UserId=9002), "ATTEMPT_OWNER_MISMATCH"),
+        (raw_attempt(1, UserId=None), "ATTEMPT_OWNER_MISSING"),
+        (raw_attempt(1, UserId="abc"), "ATTEMPT_OWNER"),
+        (raw_attempt(1, UserId=True), "ATTEMPT_OWNER"),
+        (raw_attempt(1, QuizId=999), "QUIZ_MISMATCH"),
+    ],
+)
+def test_an_attempt_not_provably_the_signed_in_users_for_this_quiz_fails_closed(
+    node: dict[str, Any], code: str
+) -> None:
+    node = dict(node)
+    if code == "ATTEMPT_OWNER_MISSING":
+        del node["UserId"]
+    with pytest.raises(ProviderEndpointChangedError, match=code):
+        attempts_of([node])
 
 
-def test_several_attempts_by_one_user_are_fine() -> None:
-    listing = parse_attempts([raw_attempt(1), raw_attempt(2)], course_id=COURSE, quiz_id=QUIZ)
-    assert [a.attempt_number for a in listing.attempts] == [1, 2]
+def test_a_single_other_user_response_is_refused_not_shown() -> None:
+    # Only one distinct user id, so a "no conflicting ids" check would have accepted this.
+    with pytest.raises(ProviderEndpointChangedError, match="ATTEMPT_OWNER_MISMATCH"):
+        attempts_of([raw_attempt(1, UserId=9002), raw_attempt(2, UserId=9002)])
+
+
+def test_a_mixed_user_response_is_refused_entirely() -> None:
+    with pytest.raises(ProviderEndpointChangedError, match="ATTEMPT_OWNER_MISMATCH"):
+        attempts_of([raw_attempt(1, UserId=9001), raw_attempt(2, UserId=9002)])
+
+
+def test_several_attempts_by_the_signed_in_user_are_fine() -> None:
+    assert [a.attempt_number for a in attempts_of([raw_attempt(1), raw_attempt(2)]).attempts] == [
+        1,
+        2,
+    ]
 
 
 @pytest.mark.parametrize(
     "payload",
     [
-        [raw_attempt(1, QuizId=999)],
         [raw_attempt(1), raw_attempt(1)],
         [raw_attempt(1, Score="high")],
         [raw_attempt(1, Score=float("nan"))],
         [raw_attempt(1, Started="yesterday")],
         [raw_attempt(1, IsPublished="yes")],
+        [raw_attempt(1, IsPublished=1)],
         [raw_attempt("x")],
         "nope",
     ],
 )
 def test_malformed_attempt_responses_fail_closed(payload: object) -> None:
     with pytest.raises(ProviderEndpointChangedError, match="Quiz structure is unsupported"):
-        parse_attempts(payload, course_id=COURSE, quiz_id=QUIZ)
+        attempts_of(payload)
 
 
 def test_an_empty_attempt_list_makes_no_claim_about_whether_the_quiz_was_attempted() -> None:
-    listing = parse_attempts([], course_id=COURSE, quiz_id=QUIZ)
+    listing = attempts_of([])
     assert listing.attempts == () and listing.complete
     assert not hasattr(listing, "attempted") and not hasattr(listing, "not_attempted")
+
+
+# --- identity (whoami) ---------------------------------------------------------------------------
+
+WHOAMI_PATH = "/d2l/api/lp/1.60/users/whoami"
+LP = {"ProductCode": "lp", "SupportedVersions": ["1.40", "1.49", "1.60"]}
+ALL_VERSIONS = [*VERSIONS, LP]
+
+
+def mock_identity(identifier: object = 9001) -> respx.Route:
+    respx.get(f"{BASE}/d2l/api/versions/").mock(return_value=httpx.Response(200, json=ALL_VERSIONS))
+    return respx.get(f"{BASE}{WHOAMI_PATH}").mock(
+        return_value=httpx.Response(200, json={"Identifier": identifier, "FirstName": "A"})
+    )
+
+
+@pytest.mark.parametrize(
+    ("body", "ok"),
+    [
+        ({"Identifier": 9001}, True),
+        ({"Identifier": "9001"}, True),
+        ({"Identifier": 0}, False),
+        ({"Identifier": -5}, False),
+        ({"Identifier": "0"}, False),
+        ({"Identifier": "09001"}, False),
+        ({"Identifier": True}, False),
+        ({"Identifier": 9001.0}, False),
+        ({"Identifier": "9001 "}, False),
+        ({"Identifier": "9001/../1"}, False),
+        ({"Identifier": ""}, False),
+        ({"Identifier": None}, False),
+        ({"Identifier": ["9001"]}, False),
+        ({"UserId": 9001}, False),
+        ({}, False),
+        ([{"Identifier": 9001}], False),
+        ("9001", False),
+    ],
+)
+def test_whoami_must_yield_exactly_one_positive_numeric_id(body: object, ok: bool) -> None:
+    if ok:
+        assert parse_whoami(body) == "9001"
+    else:
+        with pytest.raises(ValueError):
+            parse_whoami(body)
+
+
+@respx.mock
+def test_identity_uses_the_lp_route_with_its_own_version_floor_and_is_cached_per_instance() -> None:
+    route = mock_identity()
+    provider = BrightspaceIdentityProvider(client())
+    assert provider.current_user_id() == "9001" and provider.current_user_id() == "9001"
+    assert route.call_count == 1 and route.calls.last.request.method == "GET"
+    assert route.calls.last.request.headers["cookie"] == "session=fictional"
+    # A new provider (new command / new origin) never reuses another instance's identity.
+    BrightspaceIdentityProvider(client()).current_user_id()
+    assert route.call_count == 2
+
+
+@respx.mock
+def test_lp_versions_below_the_documented_floor_cannot_verify_identity() -> None:
+    respx.get(f"{BASE}/d2l/api/versions/").mock(
+        return_value=httpx.Response(
+            200,
+            json=[{"ProductCode": "lp", "SupportedVersions": ["1.46", "1.48"]}, *VERSIONS],
+        )
+    )
+    whoami = respx.get(url__regex=r".*/users/whoami").mock(
+        return_value=httpx.Response(200, json={})
+    )
+    with pytest.raises(IdentityUnverifiedError):
+        BrightspaceIdentityProvider(client()).current_user_id()
+    assert whoami.call_count == 0
+
+
+@respx.mock
+@pytest.mark.parametrize("status", [403, 404, 500])
+def test_whoami_denial_or_absence_is_an_unverified_identity(status: int) -> None:
+    respx.get(f"{BASE}/d2l/api/versions/").mock(return_value=httpx.Response(200, json=ALL_VERSIONS))
+    respx.get(f"{BASE}{WHOAMI_PATH}").mock(return_value=httpx.Response(status, text="SECRET BODY"))
+    with pytest.raises(IdentityUnverifiedError) as raised:
+        BrightspaceIdentityProvider(client()).current_user_id()
+    assert "SECRET" not in str(raised.value) and "9001" not in str(raised.value)
+
+
+@respx.mock
+def test_an_expired_session_or_rate_limit_is_passed_through_not_masked() -> None:
+    respx.get(f"{BASE}/d2l/api/versions/").mock(return_value=httpx.Response(200, json=ALL_VERSIONS))
+    route = respx.get(f"{BASE}{WHOAMI_PATH}")
+    route.mock(return_value=httpx.Response(401))
+    with pytest.raises(NotAuthenticatedError):
+        BrightspaceIdentityProvider(client()).current_user_id()
+    route.mock(return_value=httpx.Response(429, headers={"retry-after": "5"}))
+    with pytest.raises(RateLimitedError):
+        BrightspaceIdentityProvider(client()).current_user_id()
+
+
+@respx.mock
+@pytest.mark.parametrize("body", ["not json", {"Identifier": None}, [], {"Identifier": "x"}])
+def test_malformed_whoami_is_an_unverified_identity(body: object) -> None:
+    respx.get(f"{BASE}/d2l/api/versions/").mock(return_value=httpx.Response(200, json=ALL_VERSIONS))
+    reply = (
+        httpx.Response(200, text=body) if isinstance(body, str) else httpx.Response(200, json=body)
+    )
+    respx.get(f"{BASE}{WHOAMI_PATH}").mock(return_value=reply)
+    with pytest.raises(IdentityUnverifiedError):
+        BrightspaceIdentityProvider(client()).current_user_id()
 
 
 # --- transport -----------------------------------------------------------------------------------
 
 
 @respx.mock
-def test_provider_requests_only_the_documented_get_routes() -> None:
-    respx.get(f"{BASE}/d2l/api/versions/").mock(return_value=httpx.Response(200, json=VERSIONS))
+def test_attempts_are_requested_only_after_identity_and_filtered_to_that_user() -> None:
+    whoami = mock_identity()
     quizzes = respx.get(f"{BASE}{LIST_PATH}").mock(
         return_value=httpx.Response(200, json={"Objects": [raw_quiz()], "Next": None})
     )
@@ -244,15 +403,38 @@ def test_provider_requests_only_the_documented_get_routes() -> None:
     )
     provider = BrightspaceQuizProvider(client())
     assert len(provider.list_quizzes(COURSE).quizzes) == 1
+    assert whoami.call_count == 0  # listing quizzes needs no identity
     assert len(provider.list_attempts(COURSE, QUIZ).attempts) == 1
-    assert quizzes.call_count == 1 and attempts.call_count == 1
+    assert quizzes.call_count == 1 and attempts.call_count == 1 and whoami.call_count == 1
+    assert attempts.calls.last.request.url.params["userId"] == "9001"
     assert questions.call_count == 0 and other.call_count == 0
-    assert "userId" not in attempts.calls.last.request.url.params
 
 
 @respx.mock
-def test_a_permission_denial_is_an_error_not_an_empty_result() -> None:
-    respx.get(f"{BASE}/d2l/api/versions/").mock(return_value=httpx.Response(200, json=VERSIONS))
+def test_when_identity_cannot_be_verified_no_attempts_request_is_ever_made() -> None:
+    respx.get(f"{BASE}/d2l/api/versions/").mock(return_value=httpx.Response(200, json=ALL_VERSIONS))
+    respx.get(f"{BASE}{WHOAMI_PATH}").mock(return_value=httpx.Response(403))
+    attempts = respx.get(url__regex=r".*/attempts.*").mock(
+        return_value=httpx.Response(200, json=[raw_attempt()])
+    )
+    with pytest.raises(IdentityUnverifiedError):
+        BrightspaceQuizProvider(client()).list_attempts(COURSE, QUIZ)
+    assert attempts.call_count == 0  # and there is no unfiltered fallback
+
+
+@respx.mock
+def test_a_server_that_ignores_the_filter_and_returns_others_is_refused() -> None:
+    mock_identity()
+    respx.get(f"{BASE}{ATTEMPTS_PATH}").mock(
+        return_value=httpx.Response(200, json=[raw_attempt(1, UserId=9002)])
+    )
+    with pytest.raises(ProviderEndpointChangedError, match="ATTEMPT_OWNER_MISMATCH"):
+        BrightspaceQuizProvider(client()).list_attempts(COURSE, QUIZ)
+
+
+@respx.mock
+def test_a_permission_denial_on_attempts_is_an_error_not_an_empty_result() -> None:
+    mock_identity()
     respx.get(f"{BASE}{ATTEMPTS_PATH}").mock(return_value=httpx.Response(403))
     with pytest.raises(PermissionDeniedError):
         BrightspaceQuizProvider(client()).list_attempts(COURSE, QUIZ)
@@ -286,7 +468,7 @@ def test_invalid_ids_are_rejected_before_any_request(bad: str) -> None:
         provider.list_attempts(COURSE, bad)
     with pytest.raises(ValueError, match="numeric"):
         provider.list_attempts(bad, QUIZ)
-    assert route.call_count == 0
+    assert route.call_count == 0  # not even the identity request
 
 
 # --- CLI -----------------------------------------------------------------------------------------
@@ -330,9 +512,7 @@ def wire(
 ) -> None:
     service = _Service(
         quizzes if quizzes is not None else parse_quizzes([raw_quiz()], course_id=COURSE),
-        attempts
-        if attempts is not None
-        else parse_attempts([raw_attempt()], course_id=COURSE, quiz_id=QUIZ),
+        attempts if attempts is not None else attempts_of([raw_attempt()]),
     )
     monkeypatch.setattr(cli_module, "load_config", lambda: object())
     monkeypatch.setattr(
@@ -363,7 +543,7 @@ def test_quizzes_list_json_has_the_documented_stable_shape(monkeypatch: pytest.M
     ]
 
 
-def test_quizzes_attempts_json_shape_and_no_sensitive_fields(
+def test_quizzes_attempts_json_shape_and_conservative_release_fields(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     wire(monkeypatch)
@@ -373,17 +553,23 @@ def test_quizzes_attempts_json_shape_and_no_sensitive_fields(
     assert result.exit_code == 0
     body = json.loads(result.stdout)["quiz_attempts"]
     assert list(body) == ["course_id", "quiz_id", "complete", "attempts_returned", "attempts"]
-    assert list(body["attempts"][0]) == [
+    attempt = body["attempts"][0]
+    assert list(attempt) == [
         "attempt_id",
         "quiz_id",
         "attempt_number",
         "started",
         "completed",
         "status",
-        "score",
+        "attempt_completed",
+        "feedback_published",
         "score_released",
+        "score",
     ]
-    assert "SECRET" not in result.stdout and "9001" not in result.stdout
+    assert attempt["score"] is None and attempt["score_released"] is None  # never exposed
+    assert attempt["feedback_published"] is True and attempt["attempt_completed"] is True
+    for forbidden in ("SECRET", ME, "8.5"):
+        assert forbidden not in result.stdout
 
 
 def test_an_empty_quiz_list_warns_that_it_does_not_prove_there_are_none(
@@ -398,34 +584,36 @@ def test_an_empty_quiz_list_warns_that_it_does_not_prove_there_are_none(
 def test_an_empty_attempt_list_warns_it_does_not_prove_the_quiz_was_not_attempted(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    wire(monkeypatch, attempts=parse_attempts([], course_id=COURSE, quiz_id=QUIZ))
+    wire(monkeypatch, attempts=attempts_of([]))
     result = runner.invoke(
         cli_module.app, ["quizzes", "attempts", "--course", COURSE, "--quiz", QUIZ]
     )
     assert result.exit_code == 0 and "does not prove" in result.stderr
 
 
-def test_text_output_shows_withheld_scores_and_unlimited_attempts(
+def test_text_output_never_shows_a_score_and_shows_unlimited_attempts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     wire(
         monkeypatch,
         quizzes=parse_quizzes([raw_quiz(AttemptsAllowed={"IsUnlimited": True})], course_id=COURSE),
-        attempts=parse_attempts([raw_attempt(IsPublished=False)], course_id=COURSE, quiz_id=QUIZ),
+        attempts=attempts_of([raw_attempt(IsPublished=None)]),
     )
     listed = runner.invoke(cli_module.app, ["quizzes", "list", "--course", COURSE])
     assert "attempts unlimited" in listed.stdout and "limit 45m" in listed.stdout
     attempts = runner.invoke(
         cli_module.app, ["quizzes", "attempts", "--course", COURSE, "--quiz", QUIZ]
     )
-    assert "score withheld" in attempts.stdout and "8.5" not in attempts.stdout
+    assert "score not shown" in attempts.stdout and "feedback published unknown" in attempts.stdout
+    assert "8.5" not in attempts.stdout
 
 
 @pytest.mark.parametrize(
     "error",
     [
         PermissionDeniedError("provider denied access to this resource"),
-        ProviderEndpointChangedError("Quiz structure is unsupported (OTHER_USERS_ATTEMPTS)"),
+        ProviderEndpointChangedError("Quiz structure is unsupported (ATTEMPT_OWNER_MISMATCH)"),
+        IdentityUnverifiedError(IDENTITY_UNVERIFIED_MESSAGE),
     ],
 )
 def test_errors_exit_one_with_empty_stdout(
@@ -439,7 +627,10 @@ def test_errors_exit_one_with_empty_stdout(
 
 
 def test_authentication_failure_and_missing_quiz_option(monkeypatch: pytest.MonkeyPatch) -> None:
-    wire(monkeypatch, auth=_Auth(NotAuthenticatedError("No stored session; run 'd2l auth login'.")))
+    wire(
+        monkeypatch,
+        auth=_Auth(NotAuthenticatedError("No stored session; run 'd2l auth login'.")),
+    )
     result = runner.invoke(cli_module.app, ["quizzes", "list", "--course", COURSE, "--json"])
     assert result.exit_code == 1 and result.stdout == "" and "auth login" in result.stderr
     usage = runner.invoke(cli_module.app, ["quizzes", "attempts", "--course", COURSE, "--json"])

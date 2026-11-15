@@ -130,3 +130,9 @@ class UnsupportedPaginationStateError(D2LError):
     docs/PROVIDER_NOTES.md, "What remains unknown"). Raised instead of guessing a
     bookmark request parameter or silently returning a truncated list.
     """
+
+
+class IdentityUnverifiedError(D2LError):
+    """The signed-in user's identity could not be established, so data that must belong to
+    that user is refused. The message is fixed text: it never carries an identifier or a
+    provider response."""

@@ -26,7 +26,11 @@ OTHER = "https://evil.example.test"
 COOKIE = "d2lSessionVal=FICTIONAL_ACTIVITY_COOKIE_SECRET"
 SECRET = "FICTIONAL_ACTIVITY_COOKIE_SECRET"
 MARKER = "FICTIONAL_BODY_MARKER_9F3A"
-VERSIONS = [{"ProductCode": "le", "SupportedVersions": ["1.74", "1.82", "1.90"]}]
+VERSIONS = [
+    {"ProductCode": "le", "SupportedVersions": ["1.74", "1.82", "1.90"]},
+    {"ProductCode": "lp", "SupportedVersions": ["1.40", "1.49", "1.60"]},
+]
+ME = 9001
 
 COMMANDS: list[tuple[str, ...]] = [
     ("calendar", "list", "--course", "1001", "--json"),
@@ -75,6 +79,8 @@ class Recorder:
         path = request.url.path
         if path == "/d2l/api/versions/":
             return httpx.Response(200, json=VERSIONS)
+        if path.endswith("/users/whoami"):
+            return httpx.Response(200, json={"Identifier": ME})
         if path.endswith("/calendar/events/myEvents/"):
             event = {
                 "CalendarEventId": 1,
@@ -220,3 +226,142 @@ def test_the_http_client_still_has_no_write_capable_method() -> None:
 
     public = {name for name in dir(D2LHttpClient) if not name.startswith("_")}
     assert not public & {"post", "put", "patch", "delete", "request", "send"}
+
+
+# --- quiz-attempt ownership, end to end ---------------------------------------------------
+
+ATTEMPTS_CMD = ("quizzes", "attempts", "--course", "1001", "--quiz", "3003", "--json")
+
+
+def attempt(user: object = ME, **extra: Any) -> dict[str, Any]:
+    body: dict[str, Any] = {
+        "AttemptId": 1,
+        "QuizId": 3003,
+        "UserId": user,
+        "Started": "2026-03-10T15:00:00.000Z",
+        "Completed": "2026-03-10T15:30:00.000Z",
+        "Score": 7.5,
+        "IsPublished": True,
+        "AttemptFeedback": {"Text": MARKER},
+    }
+    body.update(extra)
+    return body
+
+
+def serving(attempts: object, *, whoami: httpx.Response | None = None) -> Recorder:
+    def respond(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/d2l/api/versions/":
+            return httpx.Response(200, json=VERSIONS)
+        if path.endswith("/users/whoami"):
+            return whoami or httpx.Response(200, json={"Identifier": ME})
+        return httpx.Response(200, json=attempts)
+
+    return Recorder(respond)
+
+
+def test_identity_is_verified_first_on_the_configured_origin_and_used_as_the_filter(
+    stack: Recorder,
+) -> None:
+    recorder = serving([attempt()])
+    result = run(recorder, *ATTEMPTS_CMD)
+    assert result.exit_code == 0, result.stderr
+    paths = [r.url.path for r in recorder.requests if r.url.path != "/d2l/api/versions/"]
+    assert paths[0].endswith("/lp/1.60/users/whoami") and paths[1].endswith("/attempts/")
+    assert recorder.requests[-1].url.params["userId"] == str(ME)
+    assert all(
+        r.url.host == "example.brightspace.com" and r.headers["cookie"] == COOKIE
+        for r in recorder.requests
+    )
+    body = json.loads(result.stdout)["quiz_attempts"]["attempts"][0]
+    assert body["score"] is None and body["score_released"] is None
+    for hidden in (MARKER, str(ME), "7.5"):
+        assert hidden not in result.stdout and hidden not in result.stderr
+
+
+@pytest.mark.parametrize(
+    "whoami",
+    [
+        httpx.Response(401),
+        httpx.Response(403, text=MARKER),
+        httpx.Response(404),
+        httpx.Response(500, text=MARKER),
+        httpx.Response(429, headers={"retry-after": "1"}),
+        httpx.Response(200, json={"Identifier": 0}),
+        httpx.Response(200, json={"Identifier": None}),
+        httpx.Response(200, json={}),
+        httpx.Response(200, json=[{"Identifier": ME}]),
+        httpx.Response(200, text="not json"),
+        httpx.Response(200, text="<html>x</html>", headers={"content-type": "text/html"}),
+        httpx.Response(302, headers={"location": f"{OTHER}/steal"}),
+    ],
+)
+def test_without_a_verified_identity_no_attempts_are_requested_or_shown(
+    stack: Recorder, whoami: httpx.Response
+) -> None:
+    recorder = serving([attempt()], whoami=whoami)
+    result = run(recorder, *ATTEMPTS_CMD)
+    assert result.exit_code == 1 and result.stdout == ""
+    assert not any(r.url.path.endswith("/attempts/") for r in recorder.requests)
+    assert all(r.url.host == "example.brightspace.com" for r in recorder.requests)
+    for hidden in (MARKER, SECRET, "7.5", OTHER):
+        assert hidden not in result.stderr
+
+
+@pytest.mark.parametrize(
+    "attempts",
+    [
+        [attempt(user=9002)],
+        [attempt(), attempt(user=9002, AttemptId=2)],
+        [attempt(user=None)],
+        [{k: v for k, v in attempt().items() if k != "UserId"}],
+        [attempt(QuizId=999)],
+        [attempt(), attempt()],
+    ],
+)
+def test_attempts_not_provably_the_signed_in_users_are_never_serialized(
+    stack: Recorder, attempts: object
+) -> None:
+    result = run(serving(attempts), *ATTEMPTS_CMD)
+    assert result.exit_code == 1 and result.stdout == ""
+    for hidden in (MARKER, "7.5", "9002"):
+        assert hidden not in result.stderr
+
+
+@pytest.mark.parametrize("status", [401, 403, 404, 429, 500])
+def test_attempts_route_failures_after_verification_are_clean(stack: Recorder, status: int) -> None:
+    def respond(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/d2l/api/versions/":
+            return httpx.Response(200, json=VERSIONS)
+        if path.endswith("/users/whoami"):
+            return httpx.Response(200, json={"Identifier": ME})
+        return httpx.Response(status, text=MARKER)
+
+    result = run(Recorder(respond), *ATTEMPTS_CMD)
+    assert result.exit_code == 1 and result.stdout == "" and MARKER not in result.stderr
+
+
+def test_an_oversized_attempts_response_is_refused(stack: Recorder) -> None:
+    def respond(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/d2l/api/versions/":
+            return httpx.Response(200, json=VERSIONS)
+        if path.endswith("/users/whoami"):
+            return httpx.Response(200, json={"Identifier": ME})
+        return httpx.Response(200, content=b" " * 26_000_000)
+
+    result = run(Recorder(respond), *ATTEMPTS_CMD)
+    assert result.exit_code == 1 and result.stdout == ""
+
+
+def test_identity_is_not_cached_across_commands(stack: Recorder) -> None:
+    recorder = serving([attempt()])
+    run(recorder, *ATTEMPTS_CMD)
+    run(recorder, *ATTEMPTS_CMD)
+    assert sum(r.url.path.endswith("/users/whoami") for r in recorder.requests) == 2
+
+
+def test_no_identity_value_can_be_supplied_from_the_command_line(stack: Recorder) -> None:
+    result = run(serving([attempt()]), *ATTEMPTS_CMD, "--user", "9001")
+    assert result.exit_code == 2 and result.stdout == ""

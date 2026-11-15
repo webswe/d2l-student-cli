@@ -51,7 +51,13 @@ class AttemptStatus(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class QuizAttempt:
-    """One attempt summary. ``score`` is present only when the provider marks it released."""
+    """One attempt summary of the verified signed-in user.
+
+    ``feedback_published`` is the provider's ``IsPublished`` (documented as "the attempt feedback is
+    available to the student"); it says nothing about the numeric score. No score is modelled at
+    all: the documentation does not define ``Score`` or when a student may see it, so it is
+    validated but never exposed.
+    """
 
     attempt_id: str
     quiz_id: str
@@ -59,8 +65,8 @@ class QuizAttempt:
     started: str | None
     completed: str | None
     status: AttemptStatus
-    score: float | None
-    score_released: bool | None
+    attempt_completed: bool
+    feedback_published: bool | None
 
 
 @dataclass(frozen=True, slots=True)
