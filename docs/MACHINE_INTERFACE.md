@@ -277,6 +277,33 @@ preserved. Filtering matches the assignment overview. Any read or association
 failure aborts the entire command: the interface never returns a silently
 partial unified overview.
 
+### Calendar events
+
+`d2l calendar list --course <id> --json` and `d2l calendar upcoming --json` print one object,
+`{"calendar": {...}}`. Details, window rules and limits are in
+[ACTIVITIES.md](ACTIVITIES.md).
+
+| Field | Type | Meaning |
+|---|---|---|
+| `course_id` | string | Present for `list` only. |
+| `window` | object | `start` and `end`, UTC `YYYY-MM-DDTHH:MM:SSZ`; half-open `[start, end)`. |
+| `complete` | boolean | `false` when any course failed or more pages exist. Never ignore it. |
+| `courses_requested` | integer | Courses queried. |
+| `courses_failed` | array | `{course_id, reason}`; `reason` is one of `permission_denied`, `rate_limited`, `network_unavailable`, `unsupported_response`, `provider_error`, `error`. |
+| `truncated_courses` | array of string | Courses where the provider reported more pages than were returned. |
+| `duplicates_dropped` | integer | Same-id events counted once across courses. |
+| `events` | array | Event records, ordered by start. |
+
+Event record (every key always present; `null` when unknown): `event_id`, `course_id`,
+`course_name`, `course_code`, `title`, `description` (sanitized text), `all_day` (boolean),
+`start_utc` and `end_utc` (timed events; `end_utc` may be `null`), `start_day` and `end_day`
+(all-day events, `YYYY-MM-DD`, end exclusive), `recurring`, `occurrences_expanded` (always
+`false`), `event_type`, `associated_entity` (`{type, id}` or `null`), `view_reference` (a
+relative path, never fetched).
+
+Exit status 1 with empty stdout on an actual failure; a partial result exits 0 with
+`complete: false` and a warning on stderr.
+
 ## Safe subprocess integration
 
 PowerShell should keep the streams separate and test `$LASTEXITCODE` before

@@ -30,6 +30,7 @@ from __future__ import annotations
 import base64
 import json
 from collections.abc import Mapping
+from datetime import UTC, date, datetime
 from typing import Any, NoReturn
 
 import typer
@@ -50,6 +51,12 @@ from d2l_cli.assignment_overview_service import (
 from d2l_cli.assignment_service import AssignmentService
 from d2l_cli.auth_service import AuthService, AuthState
 from d2l_cli.browser_auth import BrowserAuth
+from d2l_cli.calendar_service import (
+    CalendarService,
+    format_instant,
+    make_window,
+    upcoming_window,
+)
 from d2l_cli.client.errors import D2LError, SSOLoginFailedError
 from d2l_cli.client.http import D2LHttpClient
 from d2l_cli.config import Config, load_config
@@ -62,11 +69,13 @@ from d2l_cli.models.assignment_completeness import (
     AssignmentCompleteness,
     AssignmentCompletenessStatus,
 )
+from d2l_cli.models.calendar import CalendarEvent, CalendarListing
 from d2l_cli.models.course import Course
 from d2l_cli.models.grade import GradeItem
 from d2l_cli.models.syllabus import SyllabusCandidate, SyllabusDocument, SyllabusSearch
 from d2l_cli.providers.brightspace_announcements import BrightspaceAnnouncementProvider
 from d2l_cli.providers.brightspace_assignments import BrightspaceAssignmentProvider
+from d2l_cli.providers.brightspace_calendar import BrightspaceCalendarProvider
 from d2l_cli.providers.brightspace_content import BrightspaceContentProvider
 from d2l_cli.providers.brightspace_courses import BrightspaceCourseProvider
 from d2l_cli.providers.brightspace_grades import BrightspaceGradeProvider
@@ -121,6 +130,8 @@ app.add_typer(announcements_app, name="announcements")
 
 syllabus_app = typer.Typer(help="Find and fetch a course syllabus document (read-only).")
 app.add_typer(syllabus_app, name="syllabus")
+calendar_app = typer.Typer(help="Read your calendar events (read-only).")
+app.add_typer(calendar_app, name="calendar")
 
 _ANNOUNCEMENT_PREVIEW_CHARS = 120
 
@@ -166,6 +177,11 @@ def _build_announcement_service(config: Config, headers: Mapping[str, str]) -> A
 def _build_syllabus_service(config: Config, headers: Mapping[str, str]) -> SyllabusService:
     client = D2LHttpClient(config.base_url, auth_header_provider=lambda: headers)
     return SyllabusService(BrightspaceContentProvider(client))
+
+
+def _build_calendar_service(config: Config, headers: Mapping[str, str]) -> CalendarService:
+    client = D2LHttpClient(config.base_url, auth_header_provider=lambda: headers)
+    return CalendarService(BrightspaceCalendarProvider(client))
 
 
 def _build_assignment_overview_service(
@@ -1005,6 +1021,207 @@ def syllabus_fetch(
     except D2LError as exc:
         _fail(json_output=json_output, message=str(exc))
     typer.echo(json.dumps(_syllabus_document_to_json(document)))
+
+
+def _calendar_instant(moment: datetime) -> str:
+    return moment.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _event_to_json(event: CalendarEvent) -> dict[str, Any]:
+    entity = event.associated_entity
+    return {
+        "event_id": event.event_id,
+        "course_id": event.course_id,
+        "course_name": event.course_name,
+        "course_code": event.course_code,
+        "title": event.title,
+        "description": event.description,
+        "all_day": event.all_day,
+        "start_utc": event.start_utc,
+        "end_utc": event.end_utc,
+        "start_day": event.start_day,
+        "end_day": event.end_day,
+        "recurring": event.recurring,
+        "occurrences_expanded": event.occurrences_expanded,
+        "event_type": event.event_type,
+        "associated_entity": (
+            None
+            if entity is None
+            else {"type": entity.entity_type, "id": entity.entity_id}
+        ),
+        "view_reference": event.view_reference,
+    }
+
+
+def _calendar_listing_to_json(listing: CalendarListing, *, course_id: str | None) -> dict[str, Any]:
+    body: dict[str, Any] = {}
+    if course_id is not None:
+        body["course_id"] = course_id
+    body.update(
+        {
+            "window": {
+                "start": _calendar_instant(listing.window.start),
+                "end": _calendar_instant(listing.window.end),
+            },
+            "complete": listing.complete,
+            "courses_requested": listing.courses_requested,
+            "courses_failed": [
+                {"course_id": failure.course_id, "reason": failure.reason}
+                for failure in listing.courses_failed
+            ],
+            "truncated_courses": list(listing.truncated_courses),
+            "duplicates_dropped": listing.duplicates_dropped,
+            "events": [_event_to_json(event) for event in listing.events],
+        }
+    )
+    return {"calendar": body}
+
+
+def _warn_calendar_incomplete(listing: CalendarListing) -> None:
+    for failure in listing.courses_failed:
+        typer.echo(
+            f"warning: calendar for course {failure.course_id} could not be read "
+            f"({failure.reason}); results are incomplete.",
+            err=True,
+        )
+    for course_id in listing.truncated_courses:
+        typer.echo(
+            f"warning: course {course_id} has more calendar events than were returned; "
+            "further pages are not followed, so results are incomplete.",
+            err=True,
+        )
+
+
+def _parse_calendar_date(value: str | None, option: str) -> date | None:
+    if value is None:
+        return None
+    if len(value) != 10 or value[4] != "-" or value[7] != "-":
+        raise ValueError(f"{option} must be a date written YYYY-MM-DD")
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date()
+    except ValueError:
+        raise ValueError(f"{option} must be a real calendar date written YYYY-MM-DD") from None
+
+
+def _calendar_event_line(event: CalendarEvent) -> str:
+    label = event.course_code or event.course_id
+    if event.all_day:
+        assert event.start_day is not None
+        when = f"{event.start_day} (all day)"
+    else:
+        assert event.start_utc is not None
+        when = format_instant(event.start_utc)
+        if event.end_utc is not None:
+            when = f"{when} to {format_instant(event.end_utc)}"
+    flags = " [recurring]" if event.recurring else ""
+    return f"{when}\t{label}\t{_terminal_text(event.title)}{flags}"
+
+
+def _print_calendar(listing: CalendarListing) -> None:
+    _warn_calendar_incomplete(listing)
+    if not listing.events:
+        typer.echo("No calendar events found in this window.")
+        if not listing.complete:
+            typer.echo("(Some calendars could not be read, so this is not a complete answer.)")
+        return
+    for event in listing.events:
+        typer.echo(_calendar_event_line(event))
+
+
+@calendar_app.command("list")
+def calendar_list(
+    course_id: str = typer.Option(
+        ..., "--course", help="Brightspace course (org-unit) id -- see 'd2l courses list'."
+    ),
+    start: str | None = typer.Option(
+        None, "--from", help="First day of the window, YYYY-MM-DD (UTC). Default: today."
+    ),
+    end: str | None = typer.Option(
+        None, "--to", help="Day after the window's last day, YYYY-MM-DD (UTC, exclusive)."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit machine-readable JSON only (to stdout)."
+    ),
+) -> None:
+    """List your calendar events for one course in a bounded UTC window.
+
+    The window is ``[--from, --to)``; with neither option it is the next 30 days. Timed events
+    are shown in your computer's local time in text mode and as UTC in JSON. All-day events are
+    calendar days. Recurring events are reported once and marked recurring, never expanded.
+    """
+    config = _load_cli_config()
+    auth = _build_auth_service(config)
+    try:
+        window = make_window(
+            _parse_calendar_date(start, "--from"),
+            _parse_calendar_date(end, "--to"),
+            now=datetime.now(UTC),
+        )
+    except ValueError as exc:
+        _fail(json_output=json_output, message=str(exc))
+    try:
+        headers = auth.header_provider()
+    except D2LError as exc:
+        _fail(json_output=json_output, message=str(exc))
+    try:
+        listing = _build_calendar_service(config, headers).for_course(course_id, window)
+    except ValueError as exc:
+        _fail(json_output=json_output, message=str(exc))
+    except D2LError as exc:
+        _fail(json_output=json_output, message=str(exc))
+
+    if json_output:
+        _warn_calendar_incomplete(listing)
+        typer.echo(json.dumps(_calendar_listing_to_json(listing, course_id=course_id)))
+        return
+    _print_calendar(listing)
+
+
+@calendar_app.command("upcoming")
+def calendar_upcoming(
+    days: int = typer.Option(
+        14, "--days", help="Look ahead this many elapsed 24-hour periods from now (1-366)."
+    ),
+    all_courses: bool = typer.Option(
+        False, "--all-courses", help="Include inactive accessible courses."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit machine-readable JSON only (to stdout)."
+    ),
+) -> None:
+    """List upcoming calendar events across your active accessible courses.
+
+    One calendar request is made per selected course. A course that cannot be read is named in
+    the output and the result is marked incomplete; if every course fails the command fails.
+    """
+    config = _load_cli_config()
+    auth = _build_auth_service(config)
+    try:
+        window = upcoming_window(days, now=datetime.now(UTC))
+    except ValueError as exc:
+        _fail(json_output=json_output, message=str(exc))
+    try:
+        headers = auth.header_provider()
+    except D2LError as exc:
+        _fail(json_output=json_output, message=str(exc))
+    try:
+        courses = _build_course_service(config, headers).list_courses()
+        selected = [
+            course
+            for course in courses
+            if course.can_access and (all_courses or course.is_active)
+        ]
+        listing = _build_calendar_service(config, headers).across(selected, window)
+    except ValueError as exc:
+        _fail(json_output=json_output, message=str(exc))
+    except D2LError as exc:
+        _fail(json_output=json_output, message=str(exc))
+
+    if json_output:
+        _warn_calendar_incomplete(listing)
+        typer.echo(json.dumps(_calendar_listing_to_json(listing, course_id=None)))
+        return
+    _print_calendar(listing)
 
 
 def main() -> None:
