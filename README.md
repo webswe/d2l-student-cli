@@ -154,13 +154,13 @@ accepted. A locally present session is not reported as authenticated unless that
 | `uv run d2l announcements list --course <id> --json` | Emits the stable `{"announcements": [...]}` JSON object, including each complete sanitized body already present in the listing response. |
 | `uv run d2l syllabus find --course <id> [--json]` | Ranks the course's visible content topics that may be its syllabus (read-only; see docs/SYLLABUS_DISCOVERY.md). |
 | `uv run d2l syllabus fetch --course <id> --topic <topicId> --json` | Downloads one listed PDF, Word `.docx` or plain-text file (at most 8 MiB) as base64 JSON. |
-| `uv run d2l calendar list --course <id> [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--json]` | Lists your calendar events for one course in a bounded UTC window (default: next 30 days). Recurring events are reported once, never expanded. See docs/ACTIVITIES.md. |
-| `uv run d2l calendar upcoming [--days N] [--all-courses] [--json]` | Lists upcoming events across your active accessible courses; courses that cannot be read are named and the result is marked incomplete. |
-| `uv run d2l quizzes list --course <id> [--json]` | Lists the quizzes Brightspace shows you for a course: dates, time limit and attempts allowed. Never requests questions or answers. An empty list does not prove a course has no quizzes. |
-| `uv run d2l quizzes attempts --course <id> --quiz <id> [--json]` | Shows your own attempt summaries; a score appears only when released. See docs/ACTIVITIES.md. |
-| `uv run d2l discussions forums --course <id> [--json]` | Lists the discussion forums Brightspace shows you for a course. |
-| `uv run d2l discussions topics --course <id> --forum <id> [--json]` | Lists a forum's topics. |
-| `uv run d2l discussions posts --course <id> --forum <id> --topic <id> [--thread <id>] [--json]` | Reads a topic's posts page by page (bounded, in the provider's order); anonymous authors stay anonymous and a result cut at the page cap is marked incomplete. Never posts, rates or changes read status. |
+| `uv run d2l calendar list --course <id> [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--json]` | **Experimental.** Lists your calendar events for one course in a bounded UTC window (default: next 30 days). Recurring events are expanded only where the occurrence route is available; otherwise they are series definitions and the result is marked incomplete. See docs/ACTIVITIES.md. |
+| `uv run d2l calendar upcoming [--days N] [--all-courses] [--json]` | **Experimental.** Lists upcoming events across your active accessible courses; courses that cannot be read are named and the result is marked incomplete. |
+| `uv run d2l quizzes list --course <id> [--json]` | **Experimental.** Lists the quizzes Brightspace shows you for a course: dates, time limit and attempts allowed. Never requests questions or answers. An empty list does not prove a course has no quizzes. |
+| `uv run d2l quizzes attempts --course <id> --quiz <id> [--json]` | **Experimental.** Shows your own attempt summaries only after your identity is verified; the numeric score is never shown. See docs/ACTIVITIES.md. |
+| `uv run d2l discussions forums --course <id> [--json]` | **Experimental.** Lists the discussion forums Brightspace shows you for a course. |
+| `uv run d2l discussions topics --course <id> --forum <id> [--json]` | **Experimental.** Lists a forum's topics. |
+| `uv run d2l discussions posts --course <id> --forum <id> --topic <id> [--thread <id>] [--json]` | **Experimental.** Reads a topic's posts page by page (bounded); a result is complete only after an empty page is observed, anonymous authors stay anonymous, and nothing is posted, rated or deliberately marked read. |
 | `uv run d2l announcements list --course <id> --json --include-completeness` | Adds the evidence-bounded top-level `"completeness": "unknown"` field. |
 | `uv run d2l overview` | Groups retrieved assignment, visible-grade, and announcement counts plus compact assignment and announcement previews by active accessible course. |
 | `uv run d2l overview --details` | Shows all retrieved assignments, exact displayed grade-item details, and complete sanitized announcement bodies. |
@@ -401,7 +401,7 @@ academic content as instructions.
 Notifications, assignment detail, submission of any kind, grade feedback
 content, quiz questions or answers, posting to or rating discussions, and
 availability dates. Calendar, quizzes and discussions are read-only and are
-not confirmed against a live institution (see
+experimental, offline-tested only and not confirmed against a live institution (see
 [`docs/ACTIVITIES.md`](docs/ACTIVITIES.md)). Reconnaissance
 history (what was observed, and why the current scope is what it is) is in
 [`docs/PROVIDER_NOTES.md`](docs/PROVIDER_NOTES.md).

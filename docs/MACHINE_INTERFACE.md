@@ -277,71 +277,75 @@ preserved. Filtering matches the assignment overview. Any read or association
 failure aborts the entire command: the interface never returns a silently
 partial unified overview.
 
-### Calendar events
+### Calendar, quiz and discussion commands (experimental)
 
-`d2l calendar list --course <id> --json` and `d2l calendar upcoming --json` print one object,
-`{"calendar": {...}}`. Details, window rules and limits are in
-[ACTIVITIES.md](ACTIVITIES.md).
+These commands are **experimental**: offline-tested only and not confirmed against any live
+institution. Their JSON may change before a stable release. Details, limits and the route
+compatibility matrix are in [ACTIVITIES.md](ACTIVITIES.md). In every case a hard failure exits
+with status 1 and empty stdout; completeness is explicit and never implied.
+
+#### Calendar events
+
+`d2l calendar list --course <id> --json` and `d2l calendar upcoming --json` print
+`{"calendar": {...}}`.
 
 | Field | Type | Meaning |
 |---|---|---|
 | `course_id` | string | Present for `list` only. |
 | `window` | object | `start` and `end`, UTC `YYYY-MM-DDTHH:MM:SSZ`; half-open `[start, end)`. |
-| `complete` | boolean | `false` when any course failed or more pages exist. Never ignore it. |
+| `complete` | boolean | `false` when a course failed, more pages exist, or a recurring event is only a definition. Never ignore it. |
+| `incomplete_reasons` | array of string | Any of `course_failed`, `more_pages`, `recurring_not_expanded`. |
+| `recurrence` | object | `mode` (`occurrences`, `definitions_only`, `mixed`), `unexpanded_recurring_events` (integer), `occurrence_route_fallback_courses` (array). |
 | `courses_requested` | integer | Courses queried. |
-| `courses_failed` | array | `{course_id, reason}`; `reason` is one of `permission_denied`, `rate_limited`, `network_unavailable`, `unsupported_response`, `provider_error`, `error`. |
+| `courses_failed` | array | `{course_id, reason}`; `reason` is `permission_denied`, `rate_limited`, `network_unavailable`, `unsupported_response`, `provider_error` or `error`. |
 | `truncated_courses` | array of string | Courses where the provider reported more pages than were returned. |
-| `duplicates_dropped` | integer | Same-id events counted once across courses. |
-| `events` | array | Event records, ordered by start. |
+| `duplicates_dropped` | integer | Same `(event id, occurrence id)` counted once across courses. |
+| `events` | array | Event records ordered by start. |
 
-Event record (every key always present; `null` when unknown): `event_id`, `course_id`,
-`course_name`, `course_code`, `title`, `description` (sanitized text), `all_day` (boolean),
-`start_utc` and `end_utc` (timed events; `end_utc` may be `null`), `start_day` and `end_day`
-(all-day events, `YYYY-MM-DD`, end exclusive), `recurring`, `occurrences_expanded` (always
-`false`), `event_type`, `associated_entity` (`{type, id}` or `null`), `view_reference` (a
-relative path, never fetched).
+Event record (every key present; `null` when unknown): `event_id`, `course_id`, `course_name`,
+`course_code`, `title`, `description`, `all_day`, `start_utc` and `end_utc` (timed events;
+`end_utc` may be `null`), `start_day` and `end_day` (all-day, `YYYY-MM-DD`, end exclusive),
+`recurring`, `occurrence_id` (set for an expanded occurrence), `occurrences_expanded`,
+`event_type`, `associated_entity` (`{type, id}` or `null`), `view_reference` (a relative path,
+never fetched). A recurring event with `occurrences_expanded: false` describes the series only.
 
-Exit status 1 with empty stdout on an actual failure; a partial result exits 0 with
-`complete: false` and a warning on stderr.
+#### Quizzes
 
-### Quizzes
+`d2l quizzes list --course <id> --json` prints `{"quizzes": {"course_id", "complete",
+"quizzes": [...]}}`; `d2l quizzes attempts --course <id> --quiz <id> --json` prints
+`{"quiz_attempts": {"course_id", "quiz_id", "complete", "attempts_returned", "attempts": [...]}}`.
 
-`d2l quizzes list --course <id> --json` prints `{"quizzes": {"course_id", "complete", "quizzes":
-[...]}}` and `d2l quizzes attempts --course <id> --quiz <id> --json` prints `{"quiz_attempts":
-{"course_id", "quiz_id", "complete", "attempts_returned", "attempts": [...]}}`. Details and
-limits are in [ACTIVITIES.md](ACTIVITIES.md). `complete` is `false` when the provider reported
-more pages than were returned.
+Quiz record: `quiz_id`, `course_id`, `name`, `description`, `active`, `start_date`, `end_date`,
+`due_date` (UTC), `time_limit_minutes`, `time_limit_enforced`, `attempts_allowed`,
+`attempts_unlimited` (`null` = not reported).
 
-Quiz record (every key always present; `null` = not reported): `quiz_id`, `course_id`, `name`,
-`description`, `active`, `start_date`, `end_date`, `due_date` (UTC `...Z`), `time_limit_minutes`,
-`time_limit_enforced`, `attempts_allowed`, `attempts_unlimited`.
+Attempt record: `attempt_id`, `quiz_id`, `attempt_number`, `started`, `completed` (UTC), `status`
+(`completed`, `in_progress`, `unknown`), `attempt_completed` (boolean), `feedback_published`
+(`true`, `false` or `null` = unknown), `score_released` and `score` (**always `null`**: the
+numeric score's release rule is undocumented, so it is never shown). Attempts are shown only
+after the signed-in user's identity is verified (`whoami`) and every record is proven to belong to
+that user and quiz; otherwise the command fails with no data. An empty `attempts` array does not
+mean the quiz was not attempted. No question, answer, feedback or user-identifier field exists.
 
-Attempt record: `attempt_id`, `quiz_id`, `attempt_number`, `started`, `completed` (UTC),
-`status` (`completed`, `in_progress` or `unknown`), `score` (a number only when released, else
-`null`), `score_released` (`true`, `false` or `null`). An empty `attempts` array does not mean
-the quiz was not attempted. No question, answer, feedback or user-identifier field exists.
-
-Exit status 1 with empty stdout on failure, including a provider permission denial.
-
-### Discussions
+#### Discussions
 
 `d2l discussions forums|topics|posts ... --json` print `{"discussion_forums": {...}}`,
-`{"discussion_topics": {...}}` and `{"discussion_posts": {...}}`. Each has `course_id`, a boolean
-`complete` (`false` when more than was read exists) and its array (`forums`, `topics`, `posts`);
-`topics` also has `forum_id`; `posts` also has `forum_id`, `topic_id`, `thread_id` (or `null`)
-and `pages_fetched`. Details and limits are in [ACTIVITIES.md](ACTIVITIES.md).
+`{"discussion_topics": {...}}` and `{"discussion_posts": {...}}`, each with `course_id`, a boolean
+`complete` and its array. `posts` also carries `forum_id`, `topic_id`, `thread_id` (or `null`),
+`completeness_basis` (`empty_page_observed` is the only complete value; others are
+`page_cap_reached`, `size_cap_reached`, `end_not_confirmed`), `page_size` and `pages_fetched`.
+`topics` also has `forum_id`.
 
-- Forum record: `forum_id`, `course_id`, `name`, `description`.
-- Topic record: `topic_id`, `forum_id`, `course_id`, `name`, `description`.
-- Post record: `post_id`, `course_id`, `forum_id`, `topic_id`, `thread_id`, `parent_post_id`,
+- Forum: `forum_id`, `course_id`, `name`, `description`.
+- Topic: `topic_id`, `forum_id`, `course_id`, `name`, `description`.
+- Post: `post_id`, `course_id`, `forum_id`, `topic_id`, `thread_id`, `parent_post_id`,
   `parent_in_results` (`null` for a first post, else whether the parent was returned), `author`
   (display name; `null` when anonymous or deleted), `anonymous`, `subject`, `body` (sanitized
   text; `null` when deleted), `body_truncated`, `posted`, `edited` (UTC), `deleted`,
   `requires_approval`, `reply_count` (`null` when the provider sent no reply list).
 
-No user identifier, read status, rating or vote field exists. Exit status 1 with empty stdout on
-failure, including a provider permission denial; an incomplete result exits 0 with
-`complete: false` and a warning on stderr.
+No user identifier, read status, rating or vote field exists. A result that is not complete exits
+0 with `complete: false` and a warning on stderr; a hard failure exits 1.
 
 ## Safe subprocess integration
 

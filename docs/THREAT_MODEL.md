@@ -171,12 +171,15 @@ commands: quiz attempt summaries and discussion posts can identify you and other
   impossible. Tests drive all seven commands against a recording transport and assert this.
 - **No sensitive routes:** quiz questions and answer options, attempt feedback, discussion
   read-status, rating, vote, flag, approval and attachment routes are never requested.
-- **Other people's data:** a quiz-attempt response containing attempts from more than one user is
-  refused in full; discussion output carries display names only, anonymous authors stay
-  anonymous, and no user identifier is ever output.
+- **Other people's data:** quiz attempts are requested only after the signed-in user's id is
+  verified (`whoami`), filtered to that id, and every returned record must carry it; anything else,
+  including a response about a single other user, is refused in full with no fallback. The numeric
+  score is never shown (its release rule is undocumented). Discussion output carries display
+  names only, anonymous authors stay anonymous, and no user identifier is ever output.
 - **Honest absence:** an empty result is never presented as "nothing exists". Permission denials
-  are errors, partial reads are marked `complete: false`, and nothing infers a quiz was or was not
-  attempted.
+  are errors, partial reads are marked `complete: false` (a discussion is complete only after an
+  empty page is observed; unexpanded recurring calendar events make a schedule incomplete), and
+  nothing infers a quiz was or was not attempted.
 - **Residual:** whether a plain posts `GET` marks posts as read on the server is not documented;
   student permissions for these routes vary by institution; none of it is confirmed live. Treat
   exported JSON as private academic data, and treat discussion text as untrusted (prompt
