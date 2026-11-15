@@ -8,6 +8,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+#: ``completeness_basis`` values. Only the first means the whole topic was read.
+EMPTY_PAGE_OBSERVED = "empty_page_observed"
+PAGE_CAP_REACHED = "page_cap_reached"
+SIZE_CAP_REACHED = "size_cap_reached"
+END_NOT_CONFIRMED = "end_not_confirmed"  # a later page failed or was refused: end unknown
+
 
 @dataclass(frozen=True, slots=True)
 class DiscussionForum:
@@ -80,9 +86,15 @@ class DiscussionPosts:
     topic_id: str
     thread_id: str | None
     posts: tuple[DiscussionPost, ...]
-    has_more: bool
+    completeness_basis: str
     pages_fetched: int
+    page_size: int = 100
 
     @property
     def complete(self) -> bool:
-        return not self.has_more
+        """True only when an empty page was actually observed after the last post.
+
+        The posts route documents no total, no next-page link and no end-of-data signal, so a
+        short page is not treated as the end. Every other outcome says why it is not complete.
+        """
+        return self.completeness_basis == EMPTY_PAGE_OBSERVED

@@ -12,9 +12,11 @@ routes and every route that creates, edits, rates or deletes. Whether a plain ``
 marks posts as read is not stated in the published reference, so that side effect is unverified;
 no request is made for the purpose of changing read state.
 
-Posts are read page by page (bounded). A full page means "ask for the next"; a short page ends the
-list; a page larger than requested, a repeated post id, or a page cap reached is handled
-explicitly, never as a complete discussion. Not confirmed against a live tenant; see
+Posts are read page by page (bounded) with an explicit ascending ``sort``. The reference
+documents no total, next-page link or end-of-data signal, so only an observed *empty* page ends
+the list as complete; a short page does not. A later page that fails, a page cap, a size cap,
+a page larger than requested or a repeated post id is handled explicitly, never as a complete
+discussion. Not confirmed against a live tenant; see
 docs/ACTIVITIES.md.
 """
 
@@ -22,8 +24,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from d2l_cli.client.errors import AuthExpiredError, D2LError, NotAuthenticatedError
 from d2l_cli.client.http import D2LHttpClient
 from d2l_cli.models.discussion import (
+    EMPTY_PAGE_OBSERVED,
+    END_NOT_CONFIRMED,
+    PAGE_CAP_REACHED,
+    SIZE_CAP_REACHED,
     DiscussionForum,
     DiscussionPost,
     DiscussionPosts,
@@ -38,6 +45,7 @@ MAX_FORUMS = 500
 MAX_TOPICS = 2_000
 PAGE_SIZE = 100
 MAX_PAGES = 20
+MAX_TOTAL_TEXT_CHARS = 5_000_000
 _MAX_REPLY_IDS = 100_000
 
 
@@ -203,15 +211,29 @@ class BrightspaceDiscussionProvider:
         path = f"{self._base(course)}{forum}/topics/{topic}/posts/"
         posts: list[DiscussionPost] = []
         seen: set[str] = set()
-        has_more = False
+        text_chars = 0
         pages = 0
+        basis = PAGE_CAP_REACHED
         for number in range(1, MAX_PAGES + 1):
-            params = {"pageSize": str(PAGE_SIZE), "pageNumber": str(number)}
+            # An explicit ascending ``sort`` keeps pages stable while new posts arrive (the
+            # documented default is newest first, which shifts every page on each new post).
+            params = {"pageSize": str(PAGE_SIZE), "pageNumber": str(number), "sort": "creationdate"}
             if thread is not None:
                 params["threadId"] = thread
-            payload = self._client.get(path, params=params).json_body
-            pages += 1
+            try:
+                payload = self._client.get(path, params=params).json_body
+            except (NotAuthenticatedError, AuthExpiredError):
+                raise
+            except D2LError:
+                if number == 1:
+                    raise
+                basis = END_NOT_CONFIRMED  # keep what was read; the end could not be confirmed
+                break
+            pages = number
             page = parse_post_page(payload, course_id=course, forum_id=forum, topic_id=topic)
+            if not page:
+                basis = EMPTY_PAGE_OBSERVED
+                break
             for post in page:
                 if post.post_id in seen:
                     raise v.changed(_LABEL, "DUPLICATE_POST")
@@ -219,16 +241,17 @@ class BrightspaceDiscussionProvider:
                     raise v.changed(_LABEL, "THREAD_MISMATCH")
                 seen.add(post.post_id)
                 posts.append(post)
-            if len(page) < PAGE_SIZE:
+                text_chars += len(post.body or "") + len(post.subject or "")
+            if text_chars > MAX_TOTAL_TEXT_CHARS:
+                basis = SIZE_CAP_REACHED
                 break
-            if number == MAX_PAGES:
-                has_more = True  # a full final page: more may exist and is not read
         return DiscussionPosts(
             course_id=course,
             forum_id=forum,
             topic_id=topic,
             thread_id=thread,
             posts=tuple(posts),
-            has_more=has_more,
+            completeness_basis=basis,
             pages_fetched=pages,
+            page_size=PAGE_SIZE,
         )

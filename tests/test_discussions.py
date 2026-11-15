@@ -16,13 +16,21 @@ from typer.testing import CliRunner
 
 import d2l_cli.cli as cli_module
 from d2l_cli.client.errors import (
+    D2LError,
     NotAuthenticatedError,
     PermissionDeniedError,
     ProviderEndpointChangedError,
 )
 from d2l_cli.client.http import D2LHttpClient
 from d2l_cli.discussion_service import DiscussionService
-from d2l_cli.models.discussion import DiscussionPosts, ForumListing, TopicListing
+from d2l_cli.models.discussion import (
+    EMPTY_PAGE_OBSERVED,
+    END_NOT_CONFIRMED,
+    PAGE_CAP_REACHED,
+    DiscussionPosts,
+    ForumListing,
+    TopicListing,
+)
 from d2l_cli.providers import brightspace_discussions as bd
 from d2l_cli.providers.brightspace_discussions import (
     BrightspaceDiscussionProvider,
@@ -180,100 +188,209 @@ def test_malformed_posts_fail_closed(node: dict[str, Any]) -> None:
         parse(node)
 
 
-# --- paging and transport ------------------------------------------------------------------------
+# --- paging and transport ---------------------------------------------------------------------
 
 
 def page_of(start: int, count: int, **extra: Any) -> list[dict[str, Any]]:
     return [raw_post(i, **extra) for i in range(start, start + count)]
 
 
-@respx.mock
-def test_posts_are_read_page_by_page_until_a_short_page() -> None:
+def versions_route() -> None:
     respx.get(f"{BASE}/d2l/api/versions/").mock(return_value=httpx.Response(200, json=VERSIONS))
-    route = respx.get(f"{BASE}{POSTS_PATH}").mock(
-        side_effect=[
-            httpx.Response(200, json=page_of(1, bd.PAGE_SIZE)),
-            httpx.Response(200, json=page_of(1000, 5)),
-        ]
-    )
-    result = BrightspaceDiscussionProvider(client()).list_posts(COURSE, FORUM, TOPIC)
-    assert len(result.posts) == bd.PAGE_SIZE + 5 and result.complete and result.pages_fetched == 2
+
+
+def posts_route(*replies: httpx.Response) -> respx.Route:
+    return respx.get(f"{BASE}{POSTS_PATH}").mock(side_effect=list(replies))
+
+
+def ok(payload: object) -> httpx.Response:
+    return httpx.Response(200, json=payload)
+
+
+def read() -> DiscussionPosts:
+    return BrightspaceDiscussionProvider(client()).list_posts(COURSE, FORUM, TOPIC)
+
+
+@respx.mock
+def test_a_short_page_is_not_an_end_signal_only_an_observed_empty_page_is() -> None:
+    versions_route()
+    route = posts_route(ok(page_of(1, 5)), ok([]))
+    result = read()
+    assert len(result.posts) == 5 and result.complete
+    assert result.completeness_basis == EMPTY_PAGE_OBSERVED and result.pages_fetched == 2
+    assert route.call_count == 2  # the confirming request for the page after the short one
     first, second = (call.request.url.params for call in route.calls)
     assert (first["pageSize"], first["pageNumber"], second["pageNumber"]) == (
         str(bd.PAGE_SIZE),
         "1",
         "2",
     )
-    assert "threadId" not in first
+    assert first["sort"] == "creationdate" and "threadId" not in first
 
 
 @respx.mock
-def test_an_exact_multiple_of_the_page_size_costs_one_extra_request_and_stays_complete() -> None:
-    respx.get(f"{BASE}/d2l/api/versions/").mock(return_value=httpx.Response(200, json=VERSIONS))
-    route = respx.get(f"{BASE}{POSTS_PATH}").mock(
-        side_effect=[
-            httpx.Response(200, json=page_of(1, bd.PAGE_SIZE)),
-            httpx.Response(200, json=[]),
-        ]
-    )
-    result = BrightspaceDiscussionProvider(client()).list_posts(COURSE, FORUM, TOPIC)
-    assert result.complete and route.call_count == 2 and len(result.posts) == bd.PAGE_SIZE
+def test_posts_after_a_short_page_are_still_read_because_a_short_page_proves_nothing() -> None:
+    versions_route()
+    route = posts_route(ok(page_of(1, 3)), ok(page_of(10, 2)), ok([]))
+    result = read()
+    assert [p.post_id for p in result.posts] == ["1", "2", "3", "10", "11"]
+    assert result.complete and route.call_count == 3
 
 
 @respx.mock
-def test_reaching_the_page_cap_marks_the_result_incomplete() -> None:
-    respx.get(f"{BASE}/d2l/api/versions/").mock(return_value=httpx.Response(200, json=VERSIONS))
-    pages = [httpx.Response(200, json=page_of(n * 1000, bd.PAGE_SIZE)) for n in range(bd.MAX_PAGES)]
-    route = respx.get(f"{BASE}{POSTS_PATH}").mock(side_effect=pages)
-    result = BrightspaceDiscussionProvider(client()).list_posts(COURSE, FORUM, TOPIC)
-    assert route.call_count == bd.MAX_PAGES and result.has_more and not result.complete
-    assert len(result.posts) == bd.MAX_PAGES * bd.PAGE_SIZE
+def test_an_empty_first_page_is_a_confirmed_empty_topic_not_a_failure() -> None:
+    versions_route()
+    result = posts_route(ok([])) and read()
+    assert result.posts == () and result.complete and result.pages_fetched == 1
 
 
 @respx.mock
-def test_a_server_that_ignores_page_size_or_repeats_posts_fails_closed() -> None:
-    respx.get(f"{BASE}/d2l/api/versions/").mock(return_value=httpx.Response(200, json=VERSIONS))
-    respx.get(f"{BASE}{POSTS_PATH}").mock(
-        return_value=httpx.Response(200, json=page_of(1, bd.PAGE_SIZE + 1))
-    )
+def test_an_exact_full_page_then_an_empty_one_is_complete() -> None:
+    versions_route()
+    posts_route(ok(page_of(1, bd.PAGE_SIZE)), ok([]))
+    result = read()
+    assert result.complete and len(result.posts) == bd.PAGE_SIZE
+
+
+@respx.mock
+def test_reaching_the_page_cap_is_incomplete_with_the_cap_as_the_stated_basis() -> None:
+    versions_route()
+    pages = [ok(page_of(n * 1000, bd.PAGE_SIZE)) for n in range(bd.MAX_PAGES)]
+    route = posts_route(*pages)
+    result = read()
+    assert route.call_count == bd.MAX_PAGES and not result.complete
+    assert result.completeness_basis == PAGE_CAP_REACHED
+    assert len(result.posts) == bd.MAX_PAGES * bd.PAGE_SIZE and result.pages_fetched == bd.MAX_PAGES
+
+
+@respx.mock
+def test_exactly_the_cap_with_an_empty_next_page_is_never_requested_so_stays_incomplete() -> None:
+    versions_route()
+    route = posts_route(*[ok(page_of(n * 1000, bd.PAGE_SIZE)) for n in range(bd.MAX_PAGES)], ok([]))
+    result = read()
+    assert route.call_count == bd.MAX_PAGES  # one page beyond the cap is never requested
+    assert result.completeness_basis == PAGE_CAP_REACHED
+
+
+@respx.mock
+@pytest.mark.parametrize("status", [403, 404, 429, 500])
+def test_a_later_page_failure_keeps_the_posts_and_says_the_end_was_not_confirmed(
+    status: int,
+) -> None:
+    versions_route()
+    posts_route(ok(page_of(1, 4)), httpx.Response(status))
+    result = read()
+    assert len(result.posts) == 4 and not result.complete
+    assert result.completeness_basis == END_NOT_CONFIRMED and result.pages_fetched == 1
+
+
+@respx.mock
+@pytest.mark.parametrize("status", [403, 404, 429, 500])
+def test_a_first_page_failure_is_an_error_never_an_empty_discussion(status: int) -> None:
+    versions_route()
+    posts_route(httpx.Response(status))
+    with pytest.raises(D2LError):
+        read()
+
+
+@respx.mock
+def test_an_expired_session_on_a_later_page_aborts_instead_of_returning_partial_data() -> None:
+    versions_route()
+    posts_route(ok(page_of(1, 4)), httpx.Response(401))
+    with pytest.raises(NotAuthenticatedError):
+        read()
+
+
+@respx.mock
+def test_pages_over_the_text_budget_stop_the_read_and_say_so(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(bd, "MAX_TOTAL_TEXT_CHARS", 50)
+    versions_route()
+    big = [raw_post(1, Message={"Text": "y" * 200})]
+    result = posts_route(ok(big), ok([])) and read()
+    assert result.completeness_basis == bd.SIZE_CAP_REACHED and not result.complete
+
+
+@respx.mock
+def test_a_server_that_ignores_page_size_fails_closed() -> None:
+    versions_route()
+    posts_route(ok(page_of(1, bd.PAGE_SIZE + 1)))
     with pytest.raises(ProviderEndpointChangedError, match="ITEM_LIMIT"):
-        BrightspaceDiscussionProvider(client()).list_posts(COURSE, FORUM, TOPIC)
-    respx.get(f"{BASE}{POSTS_PATH}").mock(
-        side_effect=[
-            httpx.Response(200, json=page_of(1, bd.PAGE_SIZE)),
-            httpx.Response(200, json=page_of(1, 2)),
-        ]
-    )
-    with pytest.raises(ProviderEndpointChangedError, match="DUPLICATE_POST"):
-        BrightspaceDiscussionProvider(client()).list_posts(COURSE, FORUM, TOPIC)
+        read()
+
+
+@respx.mock
+@pytest.mark.parametrize(
+    ("second", "code"),
+    [
+        (page_of(1, 2), "DUPLICATE_POST"),  # a repeated page
+        (list(reversed(page_of(1, bd.PAGE_SIZE))), "DUPLICATE_POST"),  # reordered repeat
+        ([raw_post(1)], "DUPLICATE_POST"),
+    ],
+)
+def test_repeated_or_reordered_pages_fail_closed_rather_than_inflate_the_result(
+    second: list[dict[str, Any]], code: str
+) -> None:
+    versions_route()
+    posts_route(ok(page_of(1, bd.PAGE_SIZE)), ok(second))
+    with pytest.raises(ProviderEndpointChangedError, match=code):
+        read()
+
+
+@respx.mock
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"Objects": [], "Next": "https://evil.example/x"},  # a cursor is not part of this contract
+        {"Objects": "x"},
+        {"Next": 5},
+        "text",
+        [raw_post(1), "x"],
+    ],
+)
+def test_malformed_pagination_shapes_fail_closed_and_a_cursor_is_never_followed(
+    payload: object,
+) -> None:
+    versions_route()
+    follow = respx.get(url__regex=r".*evil.*").mock(return_value=httpx.Response(200, json=[]))
+    posts_route(ok(payload))
+    with pytest.raises(ProviderEndpointChangedError):
+        read()
+    assert follow.call_count == 0
 
 
 @respx.mock
 def test_a_thread_filter_is_sent_and_every_returned_post_must_belong_to_it() -> None:
-    respx.get(f"{BASE}/d2l/api/versions/").mock(return_value=httpx.Response(200, json=VERSIONS))
-    route = respx.get(f"{BASE}{POSTS_PATH}").mock(
-        return_value=httpx.Response(200, json=[raw_post(1), raw_post(2, ParentPostId=1)])
-    )
+    versions_route()
+    route = posts_route(ok([raw_post(1), raw_post(2, ParentPostId=1)]), ok([]))
     result = BrightspaceDiscussionProvider(client()).list_posts(COURSE, FORUM, TOPIC, "1")
-    assert route.calls.last.request.url.params["threadId"] == "1" and len(result.posts) == 2
-    route.mock(return_value=httpx.Response(200, json=[raw_post(5)]))
+    assert route.calls[0].request.url.params["threadId"] == "1" and len(result.posts) == 2
+    assert route.calls[1].request.url.params["threadId"] == "1"
+    posts_route_wrong = respx.get(f"{BASE}{POSTS_PATH}").mock(return_value=ok([raw_post(5)]))
+    assert posts_route_wrong
     with pytest.raises(ProviderEndpointChangedError, match="THREAD_MISMATCH"):
         BrightspaceDiscussionProvider(client()).list_posts(COURSE, FORUM, TOPIC, "1")
 
 
 @respx.mock
+@pytest.mark.parametrize("field", ["TopicId", "ForumId"])
+def test_posts_from_another_topic_or_forum_fail_closed(field: str) -> None:
+    versions_route()
+    posts_route(ok([raw_post(1, **{field: 999})]))
+    with pytest.raises(ProviderEndpointChangedError, match="MISMATCH"):
+        read()
+
+
+@respx.mock
 def test_only_documented_get_routes_are_used_and_never_read_status_or_writes() -> None:
-    respx.get(f"{BASE}/d2l/api/versions/").mock(return_value=httpx.Response(200, json=VERSIONS))
-    respx.get(f"{BASE}{ROOT}").mock(
-        return_value=httpx.Response(200, json=[{"ForumId": 11, "Name": "F"}])
-    )
-    respx.get(f"{BASE}{ROOT}{FORUM}/topics/").mock(
-        return_value=httpx.Response(200, json=[{"TopicId": 22, "Name": "T"}])
-    )
-    respx.get(f"{BASE}{POSTS_PATH}").mock(return_value=httpx.Response(200, json=[raw_post(1)]))
+    versions_route()
+    respx.get(f"{BASE}{ROOT}").mock(return_value=ok([{"ForumId": 11, "Name": "F"}]))
+    respx.get(f"{BASE}{ROOT}{FORUM}/topics/").mock(return_value=ok([{"TopicId": 22, "Name": "T"}]))
+    posts_route(ok([raw_post(1)]), ok([]))
     tripwire = respx.route(
         url__regex=r".*/(ReadStatus|Rating|Votes|Flag|Approval|attachments|access|groupRestrictions).*"
-    ).mock(return_value=httpx.Response(200, json={}))
+    ).mock(return_value=ok({}))
     writes = respx.route(method__in=["POST", "PUT", "PATCH", "DELETE"]).mock(
         return_value=httpx.Response(200)
     )
@@ -286,10 +403,58 @@ def test_only_documented_get_routes_are_used_and_never_read_status_or_writes() -
 
 @respx.mock
 def test_access_denial_is_an_error_not_an_empty_discussion() -> None:
-    respx.get(f"{BASE}/d2l/api/versions/").mock(return_value=httpx.Response(200, json=VERSIONS))
+    versions_route()
     respx.get(f"{BASE}{POSTS_PATH}").mock(return_value=httpx.Response(403))
     with pytest.raises(PermissionDeniedError):
-        BrightspaceDiscussionProvider(client()).list_posts(COURSE, FORUM, TOPIC)
+        read()
+
+
+# --- text safety ---------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("html", "must_not_contain"),
+    [
+        ("<script>alert(1)</script>ok", ("<", "alert")),
+        ("<style>body{x:y}</style>ok", ("<", "body{")),
+        ("&lt;script&gt;alert(1)&lt;/script&gt;", ("&lt;", "&gt;")),  # decoded to inert plain text
+        ("<p>unclosed <b>bold <i>italic", ("<",)),
+        ("<a href='javascript:evil()'>click</a>", ("javascript:", "<")),
+        ("<img src=x onerror=evil()>", ("onerror", "<")),
+        ("fine\x1b[2J\x1b[Hcleared", ("\x1b",)),
+        ("line\rOVERWRITE", ("\r",)),
+        ("back\x08\x08\x08spoof", ("\x08",)),
+        ("bell\x07 tab\there\x00 nul", ("\x07", "\x00")),
+        ("\x1b]8;;https://evil.example\x07link\x1b]8;;\x07", ("\x1b", "\x07")),
+        ("<iframe src='https://evil.example'></iframe>after", ("<", "iframe")),
+    ],
+)
+def test_terminal_and_markup_attacks_are_neutralized_in_every_text_field(
+    html: str, must_not_contain: tuple[str, ...]
+) -> None:
+    post = parse(raw_post(1, Message={"Html": html}, Subject=html[:60]))
+    for forbidden in must_not_contain:
+        assert forbidden not in (post.body or "")
+    # The subject is a plain-text field: markup characters are inert there, controls are not.
+    for control in (0x1B, 0x07, 0x00, 0x0D, 0x08):
+        assert chr(control) not in (post.subject or "")
+
+
+def test_urls_and_markdown_like_text_stay_plain_data() -> None:
+    post = parse(raw_post(1, Message={"Text": "[click](https://evil.example) **x** `y` https://z"}))
+    assert post.body is not None and "evil.example" in post.body  # shown as text, never fetched
+
+
+def test_unicode_edge_cases_survive_without_control_effects() -> None:
+    post = parse(raw_post(1, Message={"Text": "café ‮evil‬ ​zw \U0001f600"}))
+    assert post.body is not None and "‮" not in post.body and "café" in post.body
+
+
+def test_the_original_body_is_never_in_an_error_message() -> None:
+    secret = "ORIGINAL_BODY_SECRET_77"
+    with pytest.raises(ProviderEndpointChangedError) as raised:
+        parse(raw_post(1, Message={"Html": f"<p>{secret}" + "x" * 300_000 + "</p>"}))
+    assert secret not in str(raised.value)
 
 
 @respx.mock
@@ -367,7 +532,8 @@ class _Provider(BrightspaceDiscussionProvider):
             parse(raw_post(3, ParentPostId=99)),
             parse(raw_post(4, IsDeleted=True)),
         )
-        return DiscussionPosts(course_id, forum_id, topic_id, thread_id, posts, self._more, 1)
+        basis = PAGE_CAP_REACHED if self._more else EMPTY_PAGE_OBSERVED
+        return DiscussionPosts(course_id, forum_id, topic_id, thread_id, posts, basis, 1)
 
 
 def wire(monkeypatch: pytest.MonkeyPatch, provider: _Provider, auth: object | None = None) -> None:
@@ -416,6 +582,8 @@ def test_posts_json_shape_privacy_and_parent_presence(monkeypatch: pytest.Monkey
         "topic_id",
         "thread_id",
         "complete",
+        "completeness_basis",
+        "page_size",
         "pages_fetched",
         "posts",
     ]
@@ -507,7 +675,7 @@ def test_a_service_rejects_posts_for_another_topic() -> None:
         def list_posts(
             self, course_id: str, forum_id: str, topic_id: str, thread_id: str | None = None
         ) -> DiscussionPosts:
-            return DiscussionPosts(course_id, forum_id, "999", None, (), False, 1)
+            return DiscussionPosts(course_id, forum_id, "999", None, (), EMPTY_PAGE_OBSERVED, 1)
 
     with pytest.raises(ProviderEndpointChangedError, match="mismatched"):
         DiscussionService(Wrong()).list_posts(COURSE, FORUM, TOPIC)

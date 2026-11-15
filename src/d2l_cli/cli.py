@@ -1490,6 +1490,8 @@ def _discussion_posts_to_json(result: DiscussionPosts) -> dict[str, Any]:
             "topic_id": result.topic_id,
             "thread_id": result.thread_id,
             "complete": result.complete,
+            "completeness_basis": result.completeness_basis,
+            "page_size": result.page_size,
             "pages_fetched": result.pages_fetched,
             "posts": [_post_to_json(post, present=present) for post in result.posts],
         }
@@ -1598,14 +1600,21 @@ def discussions_posts(
 
     Author names are shown only when the post is not anonymous; deleted posts keep their place
     but have no text. Reading posts never posts, rates or deliberately changes read status
-    (whether the provider marks posts read on retrieval is not documented). A result that stops at
-    the page cap is marked incomplete.
+    (whether the provider marks posts read on retrieval is not documented). The provider documents
+    no total or end-of-data signal, so a result is complete only after an empty page is observed;
+    any other stop is marked incomplete with its reason.
     """
     config = _load_cli_config()
     result = _discussion_call(
         json_output, config, lambda s: s.list_posts(course_id, forum_id, topic_id, thread_id)
     )
-    _warn_discussion_incomplete("posts", result.complete)
+    if not result.complete:
+        typer.echo(
+            "warning: the end of this discussion was not confirmed "
+            f"({result.completeness_basis}; read {result.pages_fetched} page(s) of up to "
+            f"{result.page_size}); more posts may exist, so this result is incomplete.",
+            err=True,
+        )
     if json_output:
         typer.echo(json.dumps(_discussion_posts_to_json(result)))
         return
