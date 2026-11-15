@@ -12,6 +12,11 @@ Window semantics (documented in docs/ACTIVITIES.md):
   shift the window.
 * Ordering is deterministic: a timed event sorts by its UTC start; an all-day event sorts by its
   day at 00:00 UTC. That key is for ordering only and is not a real instant.
+* A recurring event is complete only when its occurrences were retrieved (LE 1.94+ occurrence
+  route). A recurring event shown only as a definition makes the listing incomplete
+  (``recurring_not_expanded``): its start and end describe the series, not each occurrence.
+* Events are de-duplicated by ``(event id, occurrence id)``, so distinct occurrences of one series
+  are never collapsed and the same occurrence is never counted twice.
 
 Nothing here hides a failure. A course that could not be read, or whose provider reported further
 pages that are not followed, is listed explicitly and the listing is marked incomplete.
@@ -37,7 +42,9 @@ from d2l_cli.models.calendar import (
     CalendarEvent,
     CalendarListing,
     CalendarWindow,
+    CourseEventPage,
     CourseFailure,
+    RecurrenceMode,
 )
 from d2l_cli.models.course import Course
 from d2l_cli.providers import valence_common as v
@@ -100,12 +107,22 @@ def in_window(event: CalendarEvent, window: CalendarWindow) -> bool:
     return started < window.end and v.parse_utc(event.end_utc) > window.start
 
 
-def sort_key(event: CalendarEvent) -> tuple[datetime, int, str, str]:
+def sort_key(event: CalendarEvent) -> tuple[datetime, int, str, str, str]:
+    occurrence = event.occurrence_id or ""
     if event.all_day:
         assert event.start_day is not None
-        return (_midnight(_day(event.start_day)), 0, event.title, event.event_id)
+        return (_midnight(_day(event.start_day)), 0, event.title, event.event_id, occurrence)
     assert event.start_utc is not None
-    return (v.parse_utc(event.start_utc), 1, event.title, event.event_id)
+    return (v.parse_utc(event.start_utc), 1, event.title, event.event_id, occurrence)
+
+
+def _mode(pages: list[CourseEventPage]) -> str:
+    modes = {page.mode for page in pages}
+    if not modes:
+        return RecurrenceMode.DEFINITIONS_ONLY.value
+    if len(modes) == 1:
+        return next(iter(modes)).value
+    return "mixed"
 
 
 def format_instant(value: str, tz: tzinfo | None = None) -> str:
@@ -156,6 +173,8 @@ class CalendarService:
             courses_failed=(),
             truncated_courses=(course_id,) if page.has_more else (),
             duplicates_dropped=0,
+            recurrence_mode=_mode([page]),
+            occurrence_fallback_courses=(course_id,) if page.occurrence_fallback else (),
         )
 
     def across(self, courses: Iterable[Course], window: CalendarWindow) -> CalendarListing:
@@ -165,7 +184,9 @@ class CalendarService:
         fails the first error is raised, so a total outage is never reported as an empty calendar.
         """
         selected = list(courses)
-        events: dict[str, CalendarEvent] = {}
+        events: dict[tuple[str, str | None], CalendarEvent] = {}
+        pages: list[CourseEventPage] = []
+        fallback: list[str] = []
         failed: list[CourseFailure] = []
         truncated: list[str] = []
         duplicates = 0
@@ -181,15 +202,19 @@ class CalendarService:
                 failed.append(CourseFailure(course_id=course.id, reason=failure_reason(error)))
                 first_error = first_error or error
                 continue
+            pages.append(page)
+            if page.occurrence_fallback:
+                fallback.append(course.id)
             if page.has_more:
                 truncated.append(course.id)
             for event in page.events:
                 if not in_window(event, window):
                     continue
-                if event.event_id in events:
+                key = (event.event_id, event.occurrence_id)
+                if key in events:
                     duplicates += 1
                     continue
-                events[event.event_id] = event
+                events[key] = event
         if selected and len(failed) == len(selected) and first_error is not None:
             raise first_error
         return CalendarListing(
@@ -199,4 +224,6 @@ class CalendarService:
             courses_failed=tuple(failed),
             truncated_courses=tuple(truncated),
             duplicates_dropped=duplicates,
+            recurrence_mode=_mode(pages),
+            occurrence_fallback_courses=tuple(fallback),
         )

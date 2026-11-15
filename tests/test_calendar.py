@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from datetime import UTC, datetime, timedelta, tzinfo
+from datetime import UTC, date, datetime, timedelta, timezone, tzinfo
 from typing import Any
 
 import httpx
@@ -33,12 +33,18 @@ from d2l_cli.client.errors import (
     UnexpectedProviderError,
 )
 from d2l_cli.client.http import D2LHttpClient
-from d2l_cli.models.calendar import CalendarEvent, CalendarWindow, CourseEventPage
+from d2l_cli.models.calendar import (
+    CalendarEvent,
+    CalendarWindow,
+    CourseEventPage,
+    RecurrenceMode,
+)
 from d2l_cli.models.course import Course
 from d2l_cli.providers import valence_common as v
 from d2l_cli.providers.brightspace_calendar import (
     BrightspaceCalendarProvider,
     parse_events,
+    parse_occurrence_events,
 )
 
 BASE = "https://example.brightspace.com"
@@ -546,6 +552,8 @@ def test_calendar_list_json_has_the_documented_stable_shape(
         "course_id",
         "window",
         "complete",
+        "incomplete_reasons",
+        "recurrence",
         "courses_requested",
         "courses_failed",
         "truncated_courses",
@@ -567,6 +575,7 @@ def test_calendar_list_json_has_the_documented_stable_shape(
         "start_day",
         "end_day",
         "recurring",
+        "occurrence_id",
         "occurrences_expanded",
         "event_type",
         "associated_entity",
@@ -712,3 +721,337 @@ def test_a_non_numeric_course_id_is_rejected_by_the_service_before_any_request(
     wire(monkeypatch, Strict({}))
     result = runner.invoke(cli_module.app, ["calendar", "list", "--course", "abc", "--json"])
     assert result.exit_code == 1 and result.stdout == "" and "numeric" in result.stderr
+
+
+# --- recurrence: occurrence route, fallback, honest completeness ---------------------------------
+
+VERSIONS_94 = [
+    {"ProductCode": "le", "SupportedVersions": ["1.74", "1.82", "1.94", "1.96"]},
+]
+OCC_PATH = "/d2l/api/le/1.96/calendar/events/myEventsWithOccurrences/"
+BASE_96 = f"/d2l/api/le/1.96/{COURSE}/calendar/events/myEvents/"
+
+
+def occ(recurrence_id: int, start: str, end: str | None = None, **extra: Any) -> dict[str, Any]:
+    body: dict[str, Any] = {
+        "RecurrenceId": recurrence_id,
+        "CalendarEventId": None,
+        "StartDateTime": start,
+        "EndDateTime": end,
+        "StartDay": None,
+        "EndDay": None,
+        "IsAllDayEvent": False,
+    }
+    body.update(extra)
+    return body
+
+
+def with_occ(event: dict[str, Any], occurrences: object = "absent") -> dict[str, Any]:
+    item: dict[str, Any] = {"EventDataInfo": event}
+    if occurrences != "absent":
+        item["Occurrences"] = occurrences
+    return item
+
+
+def recurring(event_id: int = 5, **extra: Any) -> dict[str, Any]:
+    return raw(event_id, IsRecurring=True, RecurrenceInfo={"Pattern": "weekly"}, **extra)
+
+
+def test_a_recurring_definition_alone_makes_the_listing_incomplete() -> None:
+    provider = FakeProvider({COURSE: page(COURSE, recurring(5), raw(6))})
+    listing = CalendarService(provider).for_course(COURSE, window())
+    assert listing.unexpanded_recurring == 1 and listing.complete is False
+    assert listing.incomplete_reasons == ("recurring_not_expanded",)
+
+
+def test_the_occurrence_route_expands_each_documented_occurrence_once() -> None:
+    payload = {
+        "Objects": [
+            with_occ(
+                recurring(
+                    5, StartDateTime="2026-03-03T14:00:00Z", EndDateTime="2026-03-03T15:00:00Z"
+                ),
+                [
+                    occ(1, "2026-03-03T14:00:00Z", "2026-03-03T15:00:00Z"),
+                    occ(2, "2026-03-10T14:00:00Z", "2026-03-10T15:00:00Z", CalendarEventId=5),
+                ],
+            ),
+            with_occ(raw(6), None),
+        ],
+        "Next": None,
+    }
+    result = parse_occurrence_events(payload, course_id=COURSE)
+    ids = [(e.event_id, e.occurrence_id, e.occurrences_expanded) for e in result.events]
+    assert ids == [("5", "1", True), ("5", "2", True), ("6", None, False)]
+    assert result.events[1].start_utc == "2026-03-10T14:00:00Z"  # the occurrence's own time
+    assert result.mode is RecurrenceMode.OCCURRENCES
+
+
+def test_a_recurring_event_without_an_occurrence_list_stays_a_flagged_definition() -> None:
+    result = parse_occurrence_events([with_occ(recurring(5))], course_id=COURSE)
+    assert [(e.occurrence_id, e.occurrences_expanded) for e in result.events] == [(None, False)]
+    listing = CalendarService(FakeProvider({COURSE: result})).for_course(COURSE, window())
+    assert listing.unexpanded_recurring == 1 and not listing.complete
+
+
+def test_an_empty_occurrence_list_means_none_reported_and_is_not_an_invented_event() -> None:
+    result = parse_occurrence_events([with_occ(recurring(5), [])], course_id=COURSE)
+    assert result.events == ()
+
+
+def test_all_day_occurrences_keep_day_semantics() -> None:
+    day = occ(1, None, None, IsAllDayEvent=True, StartDay="2026-03-12", EndDay="2026-03-13")
+    event = parse_occurrence_events([with_occ(recurring(5), [day])], course_id=COURSE).events[0]
+    assert event.all_day and event.start_utc is None and event.end_day == "2026-03-13"
+
+
+@pytest.mark.parametrize(
+    ("payload", "code"),
+    [
+        ([{"Occurrences": []}], "EVENT_DATA_SHAPE"),
+        ([with_occ(recurring(5), "weekly")], "OCCURRENCES_SHAPE"),
+        ([with_occ(recurring(5), ["x"])], "OCCURRENCE_SHAPE"),
+        (
+            [
+                with_occ(
+                    recurring(5), [occ(1, "2026-03-03T14:00:00Z"), occ(1, "2026-03-04T14:00:00Z")]
+                )
+            ],
+            "DUPLICATE_OCCURRENCE",
+        ),
+        (
+            [with_occ(recurring(5), [occ(1, "2026-03-03T14:00:00Z", CalendarEventId=9)])],
+            "OCCURRENCE_EVENT_MISMATCH",
+        ),
+        ([with_occ(recurring(5), [occ("x", "2026-03-03T14:00:00Z")])], "OCCURRENCE_ID"),
+        ([with_occ(recurring(5), [occ(1, "soon")])], "START"),
+        ([with_occ(recurring(5), [occ(1, None)])], "TIMED_START"),
+        (
+            [with_occ(recurring(5), [occ(1, "2026-03-03T14:00:00Z", "2026-03-03T13:00:00Z")])],
+            "END_BEFORE_START",
+        ),
+        ([with_occ(recurring(5, OrgUnitId=999), [])], "COURSE_MISMATCH"),
+        ([with_occ(recurring(5), []), with_occ(recurring(5), [])], "DUPLICATE_EVENT"),
+    ],
+)
+def test_malformed_occurrence_responses_fail_closed(payload: object, code: str) -> None:
+    with pytest.raises(ProviderEndpointChangedError, match=code):
+        parse_occurrence_events(payload, course_id=COURSE)
+
+
+def test_distinct_occurrences_of_one_series_are_never_collapsed_but_repeats_are() -> None:
+    first = parse_occurrence_events(
+        [
+            with_occ(
+                recurring(5, OrgUnitId=1),
+                [occ(1, "2026-03-03T14:00:00Z"), occ(2, "2026-03-10T14:00:00Z")],
+            )
+        ],
+        course_id="1",
+    )
+    again = parse_occurrence_events(
+        [with_occ(recurring(5, OrgUnitId=2), [occ(1, "2026-03-03T14:00:00Z")])], course_id="2"
+    )
+    provider = FakeProvider({"1": first, "2": again})
+    listing = CalendarService(provider).across([make_course("1"), make_course("2")], window())
+    assert [(e.event_id, e.occurrence_id) for e in listing.events] == [("5", "1"), ("5", "2")]
+    assert listing.duplicates_dropped == 1 and listing.complete
+
+
+def test_an_occurrence_spanning_the_window_start_is_included_by_overlap() -> None:
+    w = window("2026-03-10", "2026-03-11")
+    spanning = parse_occurrence_events(
+        [with_occ(recurring(5), [occ(1, "2026-03-09T23:00:00Z", "2026-03-10T01:00:00Z")])],
+        course_id=COURSE,
+    ).events[0]
+    assert in_window(spanning, w)
+
+
+@respx.mock
+def test_the_occurrence_route_is_used_from_le_1_94_with_the_documented_parameters() -> None:
+    respx.get(f"{BASE}/d2l/api/versions/").mock(return_value=httpx.Response(200, json=VERSIONS_94))
+    occurrences = respx.get(f"{BASE}{OCC_PATH}").mock(
+        return_value=httpx.Response(200, json={"Objects": [with_occ(raw(6), None)], "Next": None})
+    )
+    base = respx.get(f"{BASE}{BASE_96}").mock(return_value=httpx.Response(200, json=[]))
+    page = BrightspaceCalendarProvider(client()).list_events(
+        COURSE, window("2026-03-01", "2026-03-15")
+    )
+    assert page.mode is RecurrenceMode.OCCURRENCES and not page.occurrence_fallback
+    request = occurrences.calls.last.request
+    assert request.method == "GET" and request.url.params["orgUnitIdsCSV"] == COURSE
+    assert request.url.params["startDateTime"] == "2026-03-01T00:00:00.000Z"
+    assert request.url.params["endDateTime"] == "2026-03-15T00:00:00.000Z"
+    assert base.call_count == 0
+
+
+@respx.mock
+def test_before_le_1_94_the_occurrence_route_is_never_requested() -> None:
+    respx.get(f"{BASE}/d2l/api/versions/").mock(return_value=httpx.Response(200, json=VERSIONS))
+    respx.get(f"{BASE}{EVENTS_PATH}").mock(return_value=httpx.Response(200, json=[recurring(5)]))
+    occurrences = respx.get(url__regex=r".*WithOccurrences.*").mock(
+        return_value=httpx.Response(200, json=[])
+    )
+    page = BrightspaceCalendarProvider(client()).list_events(COURSE, window())
+    assert occurrences.call_count == 0 and page.mode is RecurrenceMode.DEFINITIONS_ONLY
+
+
+@respx.mock
+@pytest.mark.parametrize("status", [403, 404])
+def test_a_refused_or_missing_occurrence_route_falls_back_once_and_says_so(status: int) -> None:
+    respx.get(f"{BASE}/d2l/api/versions/").mock(return_value=httpx.Response(200, json=VERSIONS_94))
+    occurrences = respx.get(f"{BASE}{OCC_PATH}").mock(return_value=httpx.Response(status))
+    base = respx.get(f"{BASE}{BASE_96}").mock(return_value=httpx.Response(200, json=[recurring(5)]))
+    page = BrightspaceCalendarProvider(client()).list_events(COURSE, window())
+    assert occurrences.call_count == 1 and base.call_count == 1  # finite: one extra request
+    assert page.occurrence_fallback and page.mode is RecurrenceMode.DEFINITIONS_ONLY
+    listing = CalendarService(FakeProvider({COURSE: page})).for_course(COURSE, window())
+    assert listing.occurrence_fallback_courses == (COURSE,) and not listing.complete
+
+
+@respx.mock
+@pytest.mark.parametrize("status", [401, 429, 500])
+def test_other_occurrence_route_failures_are_errors_not_silent_downgrades(status: int) -> None:
+    respx.get(f"{BASE}/d2l/api/versions/").mock(return_value=httpx.Response(200, json=VERSIONS_94))
+    respx.get(f"{BASE}{OCC_PATH}").mock(return_value=httpx.Response(status))
+    base = respx.get(f"{BASE}{BASE_96}").mock(return_value=httpx.Response(200, json=[]))
+    with pytest.raises(Exception) as raised:
+        BrightspaceCalendarProvider(client()).list_events(COURSE, window())
+    assert not isinstance(raised.value, AssertionError) and base.call_count == 0
+
+
+@respx.mock
+def test_a_next_page_cursor_on_the_occurrence_route_marks_the_course_truncated() -> None:
+    respx.get(f"{BASE}/d2l/api/versions/").mock(return_value=httpx.Response(200, json=VERSIONS_94))
+    respx.get(f"{BASE}{OCC_PATH}").mock(
+        return_value=httpx.Response(200, json={"Objects": [], "Next": "https://x/y"})
+    )
+    page = BrightspaceCalendarProvider(client()).list_events(COURSE, window())
+    assert page.has_more
+    assert CalendarService(FakeProvider({COURSE: page})).for_course(
+        COURSE, window()
+    ).truncated_courses == (COURSE,)
+# --- window boundaries, calendar edges, injected clock ----------------------------------------
+
+# --- window boundaries, calendar edges, injected clock ---------------------------------------
+
+
+def test_exact_boundaries_and_one_instant_either_side() -> None:
+    w = window("2026-03-10", "2026-03-11")
+    assert not in_window(event_at("2026-03-09T23:59:59Z", None), w)  # one second before start
+    assert in_window(event_at("2026-03-10T00:00:00Z", None), w)  # exactly start (inclusive)
+    assert in_window(event_at("2026-03-10T23:59:59.999Z", None), w)  # last instant inside
+    assert not in_window(event_at("2026-03-11T00:00:00Z", None), w)  # exactly end (exclusive)
+    assert not in_window(event_at("2026-03-11T00:00:00.001Z", None), w)
+
+
+def test_an_event_crossing_midnight_overlaps_both_days_but_starts_in_only_one() -> None:
+    crossing = event_at("2026-03-10T23:00:00Z", "2026-03-11T01:00:00Z")
+    assert in_window(crossing, window("2026-03-10", "2026-03-11"))
+    assert in_window(crossing, window("2026-03-11", "2026-03-12"))  # continues into it
+    started_in = in_window(
+        event_at("2026-03-11T00:30:00Z", None), window("2026-03-10", "2026-03-11")
+    )
+    assert started_in is False
+
+
+def test_leap_days_are_real_and_impossible_february_dates_are_rejected() -> None:
+    now = datetime(2027, 1, 1, tzinfo=UTC)
+    leap = make_window(date(2028, 2, 28), date(2028, 3, 1), now=now)
+    assert (leap.end - leap.start).days == 2  # 28th and the 29th
+    assert in_window(event_at("2028-02-29T12:00:00Z", None), leap)
+    for bad in ("2027-02-29", "2026-02-30", "2026-13-01", "2026-00-10"):
+        with pytest.raises(ValueError, match="date"):
+            cli_module._parse_calendar_date(bad, "--from")
+
+
+def test_utc_offsets_never_change_the_instant() -> None:
+    plus = timezone(timedelta(hours=5, minutes=30))
+    assert format_instant("2026-03-10T14:00:00.000Z", plus) == "2026-03-10 19:30 (UTC+05:30)"
+    assert format_instant("2026-03-10T14:00:00Z", UTC) == "2026-03-10 14:00 (UTC+00:00)"
+
+
+def test_a_nonexistent_local_hour_is_never_produced_and_an_ambiguous_one_is_two_instants() -> None:
+    zone = UsEastern2026()
+    # 02:30 local on 2026-03-08 does not exist: no instant renders as 02:xx that day.
+    for minutes in range(0, 24 * 60, 15):
+        instant = datetime(2026, 3, 8, tzinfo=UTC) + timedelta(minutes=minutes)
+        rendered = format_instant(instant.strftime("%Y-%m-%dT%H:%M:%SZ"), zone)
+        assert not rendered.startswith("2026-03-08 02:")
+    # 01:30 local on 2026-11-01 happens twice, as two different instants with different offsets.
+    assert format_instant("2026-11-01T05:30:00Z", zone) == "2026-11-01 01:30 (UTC-04:00)"
+    assert format_instant("2026-11-01T06:30:00Z", zone) == "2026-11-01 01:30 (UTC-05:00)"
+
+
+@pytest.mark.parametrize("now", ["2026-03-07T12:00:00Z", "2026-10-31T12:00:00Z"])
+def test_upcoming_with_an_injected_clock_across_a_dst_change_is_exactly_n_times_24_hours(
+    monkeypatch: pytest.MonkeyPatch, now: str
+) -> None:
+    fixed = datetime.fromisoformat(now.replace("Z", "+00:00"))
+    monkeypatch.setattr(cli_module, "_utc_now", lambda: fixed)
+    provider = FakeProvider({"1": page("1")})
+    wire(monkeypatch, provider, courses=[make_course("1")])
+    result = runner.invoke(cli_module.app, ["calendar", "upcoming", "--days", "3", "--json"])
+    body = json.loads(result.stdout)["calendar"]
+    start = datetime.fromisoformat(body["window"]["start"].replace("Z", "+00:00"))
+    end = datetime.fromisoformat(body["window"]["end"].replace("Z", "+00:00"))
+    assert start == fixed and end - start == timedelta(hours=72)
+
+
+def test_the_default_list_window_uses_the_injected_clock_not_the_machine_clock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(cli_module, "_utc_now", lambda: datetime(2030, 6, 15, 9, 30, tzinfo=UTC))
+    wire(monkeypatch, FakeProvider({COURSE: page(COURSE)}))
+    result = runner.invoke(cli_module.app, ["calendar", "list", "--course", COURSE, "--json"])
+    body = json.loads(result.stdout)["calendar"]
+    assert body["window"] == {"start": "2030-06-15T00:00:00Z", "end": "2030-07-15T00:00:00Z"}
+
+
+def test_json_reports_recurrence_mode_reasons_and_warns_on_stderr(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    wire(monkeypatch, FakeProvider({COURSE: page(COURSE, recurring(5), raw(6))}))
+    result = runner.invoke(
+        cli_module.app,
+        [
+            "calendar",
+            "list",
+            "--course",
+            COURSE,
+            "--from",
+            "2026-03-01",
+            "--to",
+            "2026-04-01",
+            "--json",
+        ],
+    )
+    body = json.loads(result.stdout)["calendar"]
+    assert body["complete"] is False and body["incomplete_reasons"] == ["recurring_not_expanded"]
+    assert body["recurrence"] == {
+        "mode": "definitions_only",
+        "unexpanded_recurring_events": 1,
+        "occurrence_route_fallback_courses": [],
+    }
+    assert "series definitions" in result.stderr and "incomplete" in result.stderr
+    recurring_event = next(e for e in body["events"] if e["recurring"])
+    assert (
+        recurring_event["occurrence_id"] is None
+        and recurring_event["occurrences_expanded"] is False
+    )
+
+
+def test_partial_course_failures_still_report_complete_false_with_a_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = FakeProvider(
+        {
+            "1": page("1", raw(1, StartDateTime="2026-03-10T10:00:00Z", EndDateTime=None)),
+            "2": PermissionDeniedError("x"),
+        }
+    )
+    wire(monkeypatch, provider, courses=[make_course("1"), make_course("2")])
+    monkeypatch.setattr(cli_module, "_utc_now", lambda: datetime(2026, 3, 9, tzinfo=UTC))
+    result = runner.invoke(cli_module.app, ["calendar", "upcoming", "--days", "5", "--json"])
+    body = json.loads(result.stdout)["calendar"]
+    assert body["complete"] is False and body["incomplete_reasons"] == ["course_failed"]

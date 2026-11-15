@@ -1067,6 +1067,7 @@ def _event_to_json(event: CalendarEvent) -> dict[str, Any]:
         "start_day": event.start_day,
         "end_day": event.end_day,
         "recurring": event.recurring,
+        "occurrence_id": event.occurrence_id,
         "occurrences_expanded": event.occurrences_expanded,
         "event_type": event.event_type,
         "associated_entity": (
@@ -1089,6 +1090,12 @@ def _calendar_listing_to_json(listing: CalendarListing, *, course_id: str | None
                 "end": _calendar_instant(listing.window.end),
             },
             "complete": listing.complete,
+            "incomplete_reasons": list(listing.incomplete_reasons),
+            "recurrence": {
+                "mode": listing.recurrence_mode,
+                "unexpanded_recurring_events": listing.unexpanded_recurring,
+                "occurrence_route_fallback_courses": list(listing.occurrence_fallback_courses),
+            },
             "courses_requested": listing.courses_requested,
             "courses_failed": [
                 {"course_id": failure.course_id, "reason": failure.reason}
@@ -1102,7 +1109,19 @@ def _calendar_listing_to_json(listing: CalendarListing, *, course_id: str | None
     return {"calendar": body}
 
 
+def _utc_now() -> datetime:
+    """The current UTC time; a single seam so tests inject a fixed clock."""
+    return datetime.now(UTC)
+
+
 def _warn_calendar_incomplete(listing: CalendarListing) -> None:
+    if listing.unexpanded_recurring:
+        typer.echo(
+            f"warning: {listing.unexpanded_recurring} recurring event(s) are shown only as "
+            "series definitions; their occurrences were not retrieved, so this schedule is "
+            "incomplete.",
+            err=True,
+        )
     for failure in listing.courses_failed:
         typer.echo(
             f"warning: calendar for course {failure.course_id} could not be read "
@@ -1180,7 +1199,7 @@ def calendar_list(
         window = make_window(
             _parse_calendar_date(start, "--from"),
             _parse_calendar_date(end, "--to"),
-            now=datetime.now(UTC),
+            now=_utc_now(),
         )
     except ValueError as exc:
         _fail(json_output=json_output, message=str(exc))
@@ -1222,7 +1241,7 @@ def calendar_upcoming(
     config = _load_cli_config()
     auth = _build_auth_service(config)
     try:
-        window = upcoming_window(days, now=datetime.now(UTC))
+        window = upcoming_window(days, now=_utc_now())
     except ValueError as exc:
         _fail(json_output=json_output, message=str(exc))
     try:
