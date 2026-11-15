@@ -30,7 +30,7 @@ Verification status:
 
 No other URL is ever requested. A topic's own `Url` field is read only for its file extension and is
 never followed. A topic id is fetched only if the same course's table of contents lists it as a
-visible, non-broken file whose extension is `pdf`, `txt` or absent.
+visible, non-broken file whose extension is `pdf`, `docx`, `txt` or absent.
 
 ## Commands
 

@@ -120,8 +120,9 @@ accepted. A locally present session is not reported as authenticated unless that
 - **Expiry:** an expired session is detected from the provider's login redirect, and the command
   stops with a "log in again" error and a non-zero exit code. Nothing is renewed or deleted
   automatically.
-- **Logout:** there is no `logout` command. To remove the session, delete the Credential Manager
-  entries whose name contains `d2l-student-cli`.
+- **Logout:** there is no `logout` command. To remove the session, delete the Windows Credential
+  Manager entry described under "Update and uninstall" below.
+
 ## What it does today
 
 | Command | What it does |
@@ -143,7 +144,7 @@ accepted. A locally present session is not reported as authenticated unless that
 | `uv run d2l announcements list --course <id> --details` | Shows each complete sanitized plain-text announcement body. |
 | `uv run d2l announcements list --course <id> --json` | Emits the stable `{"announcements": [...]}` JSON object, including each complete sanitized body already present in the listing response. |
 | `uv run d2l syllabus find --course <id> [--json]` | Ranks the course's visible content topics that may be its syllabus (read-only; see docs/SYLLABUS_DISCOVERY.md). |
-| `uv run d2l syllabus fetch --course <id> --topic <topicId> --json` | Downloads one listed PDF or text file (at most 8 MiB) as base64 JSON. |
+| `uv run d2l syllabus fetch --course <id> --topic <topicId> --json` | Downloads one listed PDF, Word `.docx` or plain-text file (at most 8 MiB) as base64 JSON. |
 | `uv run d2l announcements list --course <id> --json --include-completeness` | Adds the evidence-bounded top-level `"completeness": "unknown"` field. |
 | `uv run d2l overview` | Groups retrieved assignment, visible-grade, and announcement counts plus compact assignment and announcement previews by active accessible course. |
 | `uv run d2l overview --details` | Shows all retrieved assignments, exact displayed grade-item details, and complete sanitized announcement bodies. |
@@ -152,6 +153,10 @@ accepted. A locally present session is not reported as authenticated unless that
 
 `<id>` is the Brightspace course (org-unit) id shown in the `courses list --json` output (`id`). Placeholders only
 in the examples here; no course lookup by name is performed.
+
+The syllabus commands are covered by offline tests on a mocked transport only. Retrieval of a
+PDF, `.docx` or text file from a live institution has not been independently confirmed; see
+[`docs/SYLLABUS_DISCOVERY.md`](docs/SYLLABUS_DISCOVERY.md).
 
 Errors go to stderr with a non-zero exit code, so `--json` stdout stays pure
 JSON.
@@ -328,10 +333,11 @@ One command invocation makes exactly one authenticated News-listing GET.
   when `uv.lock` changes.
 - **Remove local files:** delete the cloned folder (its `.venv` is inside it). Nothing is
   installed globally.
-- **Remove stored login:** your session lives in Windows Credential Manager (Control Panel,
-  Credential Manager, Windows Credentials, entries whose name contains `d2l-student-cli`). Deleting the folder
-  does **not** remove it; remove the entries yourself. There is no `logout` command, and nothing
-  is deleted automatically.
+- **Remove stored login:** your session lives in Windows Credential Manager as a generic
+  credential named `d2l-student-cli` (user name `session`). Deleting the folder does **not**
+  remove it. Open Control Panel, Credential Manager, Windows Credentials, find the entry whose
+  name is `d2l-student-cli` (or ends in `@d2l-student-cli`), and remove it there. There is no
+  `logout` command, and nothing is deleted automatically.
 
 ## Security model
 
@@ -442,7 +448,9 @@ source with `uv`; no package-index publication is required or implied.
 [Architecture](docs/ARCHITECTURE.md) · [Threat model](docs/THREAT_MODEL.md) ·
 [Security policy](SECURITY.md) · [Machine interface](docs/MACHINE_INTERFACE.md) ·
 [Development](docs/DEVELOPMENT.md) · [Contributing](CONTRIBUTING.md) ·
-[Releasing](docs/RELEASING.md) · [Changelog](CHANGELOG.md) · [Support](SUPPORT.md)
+[Releasing](docs/RELEASING.md) · [Changelog](CHANGELOG.md) · [Support](SUPPORT.md) ·
+[Troubleshooting](docs/TROUBLESHOOTING.md) · [Provider notes](docs/PROVIDER_NOTES.md) ·
+[Syllabus discovery](docs/SYLLABUS_DISCOVERY.md)
 
 ## License
 

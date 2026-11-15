@@ -94,7 +94,7 @@ Add a provider module, model, service and CLI command, with fictional fixtures (
   impossible rather than policy-dependent.
 - **Credential Manager only, no fallback.** A plaintext fallback would silently weaken the model.
 - **No new JSON properties.** External consumers validate strictly.
-- **One large `cli.py` (about 1,200 lines), deliberately kept.** It is flat (one function per
+- **One large `cli.py` (about 1,000 lines), deliberately kept.** It is flat (one function per
   command) with no shared mutable state beyond the Typer app. Splitting it would move code
   without reducing risk; revisit only if the command count grows substantially.
 

@@ -4,8 +4,9 @@ What the Brightspace providers assume, and why they fail closed. This is a summa
 contributors; it is not a description of D2L's documented or supported interfaces. Brightspace
 deployments differ by institution and version, and everything here may change without notice.
 
-Section labels quoted in source comments (for example "Phase 2A") are historical labels from the
-original research notes, which are not part of this repository. Rely on the code and its tests.
+Section labels and references quoted in source comments (for example "Phase 2A" or "the Phase 1
+report") are historical labels from the original research notes, which are not part of this
+repository. Rely on the code and its tests.
 
 ## Principles
 

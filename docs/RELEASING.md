@@ -79,8 +79,9 @@ Recommendations (do not block): additional platforms, extra badges, further refa
 ## Maintainer release checklist
 
 1. Confirm CI is green on the exact commit (`gh run list --branch main`).
-2. Bump `version` in `pyproject.toml`, run `uv lock`, replace `(release date pending)` in
-   `CHANGELOG.md` with the release date, commit.
+2. Confirm `version` in `pyproject.toml` is the intended release (bump it and run `uv lock` only
+   if it is not), replace `(release date pending)` in `CHANGELOG.md` with the approved release
+   date, and commit. Tag only after CI has passed on that exact commit.
 3. In a fresh clone in a temp directory: `uv sync --locked`, the offline checklist above, then
    `uv build --out-dir <tmp>` and `python scripts/verify_dist.py <tmp>`.
 4. Install the wheel into a new venv; run `d2l --version` and `d2l --help`.
@@ -92,8 +93,8 @@ Recommendations (do not block): additional platforms, extra badges, further refa
 
 - **GitHub source**: public visibility, license and protections are owner decisions.
 - **GitHub Releases**: only artifacts built and inspected per the checklist above.
-- **PyPI**: not published. Before the first upload, check name availability for `d2l-cli`, resolve
-  the license, and prefer Trusted Publishing (OIDC) from a workflow that runs only on a manually
+- **PyPI**: not published. Before the first upload, check name availability for `d2l-cli`, confirm the
+  MIT license metadata, and prefer Trusted Publishing (OIDC) from a workflow that runs only on a manually
   approved release in a protected `pypi` environment, never on an ordinary push or tag. Validate
   on TestPyPI first as its own approved step. No publishing workflow exists in this repository.
 - **Standalone Windows executable**: not available.
