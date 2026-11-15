@@ -127,8 +127,14 @@ def optional_text(
     return text or None
 
 
-def rich_text(value: object, label: str, code: str) -> str | None:
-    """Plain text from a provider description: an HTML string or a ``{Html|Text: ...}`` object."""
+def rich_text(
+    value: object, label: str, code: str, *, limit: int | None = MAX_TEXT_CHARS
+) -> str | None:
+    """Plain text from a provider description: an HTML string or a ``{Html|Text: ...}`` object.
+
+    Cut at ``limit`` characters (``None`` = never cut). Callers that must tell the reader about a
+    cut use ``rich_text_bounded``.
+    """
     if value is None:
         return None
     source: object = value
@@ -144,7 +150,19 @@ def rich_text(value: object, label: str, code: str) -> str | None:
         text = sanitize_announcement_body(source)
     except AnnouncementSanitizationError:
         raise changed(label, code) from None
-    return text[:MAX_TEXT_CHARS] if text else None
+    if not text:
+        return None
+    return text if limit is None else text[:limit]
+
+
+def rich_text_bounded(
+    value: object, label: str, code: str, *, limit: int = MAX_TEXT_CHARS
+) -> tuple[str | None, bool]:
+    """Plain text from a provider body plus whether it was cut at ``limit`` characters."""
+    text = rich_text(value, label, code, limit=None)
+    if text is None or len(text) <= limit:
+        return text, False
+    return text[:limit], True
 
 
 def utc_datetime(value: object, label: str, code: str) -> str | None:

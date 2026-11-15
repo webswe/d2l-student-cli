@@ -62,6 +62,7 @@ from d2l_cli.client.http import D2LHttpClient
 from d2l_cli.config import Config, load_config
 from d2l_cli.course_service import CourseService
 from d2l_cli.credentials import KeyringCredentialStore
+from d2l_cli.discussion_service import DiscussionService
 from d2l_cli.grade_service import GradeService
 from d2l_cli.models.announcement import Announcement
 from d2l_cli.models.assignment import Assignment
@@ -71,6 +72,12 @@ from d2l_cli.models.assignment_completeness import (
 )
 from d2l_cli.models.calendar import CalendarEvent, CalendarListing
 from d2l_cli.models.course import Course
+from d2l_cli.models.discussion import (
+    DiscussionForum,
+    DiscussionPost,
+    DiscussionPosts,
+    DiscussionTopic,
+)
 from d2l_cli.models.grade import GradeItem
 from d2l_cli.models.quiz import AttemptListing, Quiz, QuizAttempt, QuizListing
 from d2l_cli.models.syllabus import SyllabusCandidate, SyllabusDocument, SyllabusSearch
@@ -79,6 +86,7 @@ from d2l_cli.providers.brightspace_assignments import BrightspaceAssignmentProvi
 from d2l_cli.providers.brightspace_calendar import BrightspaceCalendarProvider
 from d2l_cli.providers.brightspace_content import BrightspaceContentProvider
 from d2l_cli.providers.brightspace_courses import BrightspaceCourseProvider
+from d2l_cli.providers.brightspace_discussions import BrightspaceDiscussionProvider
 from d2l_cli.providers.brightspace_grades import BrightspaceGradeProvider
 from d2l_cli.providers.brightspace_quizzes import BrightspaceQuizProvider
 from d2l_cli.quiz_service import QuizService
@@ -137,6 +145,8 @@ calendar_app = typer.Typer(help="Read your calendar events (read-only).")
 app.add_typer(calendar_app, name="calendar")
 quizzes_app = typer.Typer(help="Read quiz metadata and your own attempts (read-only).")
 app.add_typer(quizzes_app, name="quizzes")
+discussions_app = typer.Typer(help="Read discussion forums, topics and posts (read-only).")
+app.add_typer(discussions_app, name="discussions")
 
 _ANNOUNCEMENT_PREVIEW_CHARS = 120
 
@@ -192,6 +202,11 @@ def _build_calendar_service(config: Config, headers: Mapping[str, str]) -> Calen
 def _build_quiz_service(config: Config, headers: Mapping[str, str]) -> QuizService:
     client = D2LHttpClient(config.base_url, auth_header_provider=lambda: headers)
     return QuizService(BrightspaceQuizProvider(client))
+
+
+def _build_discussion_service(config: Config, headers: Mapping[str, str]) -> DiscussionService:
+    client = D2LHttpClient(config.base_url, auth_header_provider=lambda: headers)
+    return DiscussionService(BrightspaceDiscussionProvider(client))
 
 
 def _build_assignment_overview_service(
@@ -1394,6 +1409,196 @@ def quizzes_attempts(
             f"attempt {number}\t{attempt.status.value}\tstarted {attempt.started or '-'}"
             f"\tcompleted {attempt.completed or '-'}\t{score}"
         )
+
+
+def _forum_to_json(forum: DiscussionForum) -> dict[str, Any]:
+    return {
+        "forum_id": forum.forum_id,
+        "course_id": forum.course_id,
+        "name": forum.name,
+        "description": forum.description,
+    }
+
+
+def _topic_to_json(topic: DiscussionTopic) -> dict[str, Any]:
+    return {
+        "topic_id": topic.topic_id,
+        "forum_id": topic.forum_id,
+        "course_id": topic.course_id,
+        "name": topic.name,
+        "description": topic.description,
+    }
+
+
+def _post_to_json(post: DiscussionPost, *, present: frozenset[str]) -> dict[str, Any]:
+    return {
+        "post_id": post.post_id,
+        "course_id": post.course_id,
+        "forum_id": post.forum_id,
+        "topic_id": post.topic_id,
+        "thread_id": post.thread_id,
+        "parent_post_id": post.parent_post_id,
+        # Whether the parent is among the posts returned; null for a thread's first post.
+        "parent_in_results": (
+            None if post.parent_post_id is None else post.parent_post_id in present
+        ),
+        "author": post.author,
+        "anonymous": post.anonymous,
+        "subject": post.subject,
+        "body": post.body,
+        "body_truncated": post.body_truncated,
+        "posted": post.posted,
+        "edited": post.edited,
+        "deleted": post.deleted,
+        "requires_approval": post.requires_approval,
+        "reply_count": post.reply_count,
+    }
+
+
+def _discussion_posts_to_json(result: DiscussionPosts) -> dict[str, Any]:
+    present = frozenset(post.post_id for post in result.posts)
+    return {
+        "discussion_posts": {
+            "course_id": result.course_id,
+            "forum_id": result.forum_id,
+            "topic_id": result.topic_id,
+            "thread_id": result.thread_id,
+            "complete": result.complete,
+            "pages_fetched": result.pages_fetched,
+            "posts": [_post_to_json(post, present=present) for post in result.posts],
+        }
+    }
+
+
+def _warn_discussion_incomplete(what: str, complete: bool) -> None:
+    if not complete:
+        typer.echo(
+            f"warning: more {what} exist than were read; this result is incomplete.",
+            err=True,
+        )
+
+
+def _discussion_call(json_output: bool, config: Config, call: Any) -> Any:
+    auth = _build_auth_service(config)
+    try:
+        headers = auth.header_provider()
+    except D2LError as exc:
+        _fail(json_output=json_output, message=str(exc))
+    try:
+        return call(_build_discussion_service(config, headers))
+    except ValueError as exc:
+        _fail(json_output=json_output, message=str(exc))
+    except D2LError as exc:
+        _fail(json_output=json_output, message=str(exc))
+
+
+@discussions_app.command("forums")
+def discussions_forums(
+    course_id: str = typer.Option(
+        ..., "--course", help="Brightspace course (org-unit) id -- see 'd2l courses list'."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit machine-readable JSON only (to stdout)."
+    ),
+) -> None:
+    """List the discussion forums Brightspace shows you for one course."""
+    config = _load_cli_config()
+    listing = _discussion_call(json_output, config, lambda s: s.list_forums(course_id))
+    _warn_discussion_incomplete("forums", listing.complete)
+    if json_output:
+        typer.echo(
+            json.dumps(
+                {
+                    "discussion_forums": {
+                        "course_id": course_id,
+                        "complete": listing.complete,
+                        "forums": [_forum_to_json(f) for f in listing.forums],
+                    }
+                }
+            )
+        )
+        return
+    for forum in listing.forums:
+        typer.echo(f"{forum.forum_id}\t{_terminal_text(forum.name)}")
+
+
+@discussions_app.command("topics")
+def discussions_topics(
+    course_id: str = typer.Option(
+        ..., "--course", help="Brightspace course (org-unit) id -- see 'd2l courses list'."
+    ),
+    forum_id: str = typer.Option(..., "--forum", help="Forum id from 'd2l discussions forums'."),
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit machine-readable JSON only (to stdout)."
+    ),
+) -> None:
+    """List the topics of one forum."""
+    config = _load_cli_config()
+    listing = _discussion_call(json_output, config, lambda s: s.list_topics(course_id, forum_id))
+    _warn_discussion_incomplete("topics", listing.complete)
+    if json_output:
+        typer.echo(
+            json.dumps(
+                {
+                    "discussion_topics": {
+                        "course_id": course_id,
+                        "forum_id": forum_id,
+                        "complete": listing.complete,
+                        "topics": [_topic_to_json(t) for t in listing.topics],
+                    }
+                }
+            )
+        )
+        return
+    for topic in listing.topics:
+        typer.echo(f"{topic.topic_id}\t{_terminal_text(topic.name)}")
+
+
+@discussions_app.command("posts")
+def discussions_posts(
+    course_id: str = typer.Option(
+        ..., "--course", help="Brightspace course (org-unit) id -- see 'd2l courses list'."
+    ),
+    forum_id: str = typer.Option(..., "--forum", help="Forum id from 'd2l discussions forums'."),
+    topic_id: str = typer.Option(..., "--topic", help="Topic id from 'd2l discussions topics'."),
+    thread_id: str | None = typer.Option(
+        None, "--thread", help="Only the posts of this thread (a numeric thread id)."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit machine-readable JSON only (to stdout)."
+    ),
+) -> None:
+    """Read the posts of one topic, page by page (bounded), in the provider's order.
+
+    Author names are shown only when the post is not anonymous; deleted posts keep their place
+    but have no text. Reading posts never posts, rates or deliberately changes read status
+    (whether the provider marks posts read on retrieval is not documented). A result that stops at
+    the page cap is marked incomplete.
+    """
+    config = _load_cli_config()
+    result = _discussion_call(
+        json_output, config, lambda s: s.list_posts(course_id, forum_id, topic_id, thread_id)
+    )
+    _warn_discussion_incomplete("posts", result.complete)
+    if json_output:
+        typer.echo(json.dumps(_discussion_posts_to_json(result)))
+        return
+    if not result.posts:
+        typer.echo("No posts were returned.")
+        return
+    for post in result.posts:
+        reply = f" (reply to {post.parent_post_id})" if post.parent_post_id else ""
+        who = "anonymous" if post.anonymous else (post.author or "unknown author")
+        typer.echo(f"post {post.post_id}{reply}\t{_terminal_text(who)}\t{post.posted or '-'}")
+        if post.deleted:
+            typer.echo("   (deleted)")
+            continue
+        if post.subject:
+            typer.echo(f"   {_terminal_text(post.subject)}")
+        for line in (post.body or "").split("\n"):
+            typer.echo(f"   {line}" if line else "")
+        if post.body_truncated:
+            typer.echo("   [text truncated]")
 
 
 def main() -> None:

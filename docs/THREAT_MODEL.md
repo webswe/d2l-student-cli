@@ -160,3 +160,24 @@ site and of when two sites are the same origin.
   the first. Software running as the same Windows user can still read the entry directly.
 - **Tests:** `tests/test_session_store.py` and `tests/test_session_origin_binding.py` record every
   request the mocked transport sees and assert that none reaches a second origin.
+
+## Calendar, quiz and discussion data
+
+The calendar, quiz and discussion commands read more personal academic data than the earlier
+commands: quiz attempt summaries and discussion posts can identify you and other students.
+
+- **Same transport:** they use the existing GET-only client, so a request method other than `GET`,
+  an absolute or off-origin target and an automatically followed redirect are structurally
+  impossible. Tests drive all seven commands against a recording transport and assert this.
+- **No sensitive routes:** quiz questions and answer options, attempt feedback, discussion
+  read-status, rating, vote, flag, approval and attachment routes are never requested.
+- **Other people's data:** a quiz-attempt response containing attempts from more than one user is
+  refused in full; discussion output carries display names only, anonymous authors stay
+  anonymous, and no user identifier is ever output.
+- **Honest absence:** an empty result is never presented as "nothing exists". Permission denials
+  are errors, partial reads are marked `complete: false`, and nothing infers a quiz was or was not
+  attempted.
+- **Residual:** whether a plain posts `GET` marks posts as read on the server is not documented;
+  student permissions for these routes vary by institution; none of it is confirmed live. Treat
+  exported JSON as private academic data, and treat discussion text as untrusted (prompt
+  injection can come from other students).

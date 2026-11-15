@@ -87,3 +87,39 @@ d2l quizzes attempts --course <id> --quiz <id> [--json]
 - **Unverified:** live response shapes, whether students may read the attempts route, whether
   `IsPublished` is the right release signal for scores on your version, and quiz permission rules
   at your institution.
+
+## Discussions
+
+```text
+d2l discussions forums --course <id> [--json]
+d2l discussions topics --course <id> --forum <id> [--json]
+d2l discussions posts --course <id> --forum <id> --topic <id> [--thread <id>] [--json]
+```
+
+- **Routes:** `GET /d2l/api/le/{version}/{orgUnitId}/discussions/forums/`, `.../forums/{forumId}/topics/`
+  and `.../topics/{topicId}/posts/` (scopes `discussions:forums:readonly`,
+  `discussions:topics:readonly`, `discussions:posts:readonly`). There is no separate threads route;
+  `--thread` adds the documented `threadId` filter.
+- **Pages:** posts are read with `pageSize=100` and `pageNumber`, up to 20 pages (2,000 posts). A
+  short page ends the list; a full page asks for the next. A page larger than requested, a repeated
+  post id, or a post outside the requested thread is an error. Reaching the page cap marks the
+  result `complete: false`; a partial page of posts is never presented as the whole discussion.
+- **Visibility:** you see only what Brightspace shows your role: hidden forums and topics, group
+  restrictions and private threads are enforced by the provider and are not bypassed. A denied
+  route is an error, never "no posts".
+- **Privacy:** an anonymous post has no author. A deleted post keeps its place in the thread but
+  has no subject, text or author. Only a display name is ever shown; no user identifier, rating,
+  vote or read flag exists in the output. `requires_approval` reports moderation state.
+- **Threads:** `parent_post_id` is exactly what the provider sent, and `parent_in_results` says
+  whether that parent is among the posts returned, so a missing parent is visible rather than
+  invented. `reply_count` comes from the provider's own reply list and is `null` when none was
+  sent.
+- **Text:** bodies are sanitized plain text. A body longer than 20,000 characters is cut and
+  marked `body_truncated: true`; a body too large to sanitize safely is an error.
+- **Read status:** the commands never request the read-status, rating, vote, flag, approval or
+  attachment routes and make no request for the purpose of changing read state. The published
+  reference does not say whether a plain `GET .../posts/` marks posts as read on the server, so
+  that side effect is **unverified**.
+- **Unverified:** live response shapes (including whether the posts route returns a bare array),
+  whether `IsAnonymous`/`IsDeleted` are present on your version, server-side read marking, and
+  tenant-specific discussion permissions.

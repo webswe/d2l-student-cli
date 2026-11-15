@@ -323,6 +323,26 @@ the quiz was not attempted. No question, answer, feedback or user-identifier fie
 
 Exit status 1 with empty stdout on failure, including a provider permission denial.
 
+### Discussions
+
+`d2l discussions forums|topics|posts ... --json` print `{"discussion_forums": {...}}`,
+`{"discussion_topics": {...}}` and `{"discussion_posts": {...}}`. Each has `course_id`, a boolean
+`complete` (`false` when more than was read exists) and its array (`forums`, `topics`, `posts`);
+`topics` also has `forum_id`; `posts` also has `forum_id`, `topic_id`, `thread_id` (or `null`)
+and `pages_fetched`. Details and limits are in [ACTIVITIES.md](ACTIVITIES.md).
+
+- Forum record: `forum_id`, `course_id`, `name`, `description`.
+- Topic record: `topic_id`, `forum_id`, `course_id`, `name`, `description`.
+- Post record: `post_id`, `course_id`, `forum_id`, `topic_id`, `thread_id`, `parent_post_id`,
+  `parent_in_results` (`null` for a first post, else whether the parent was returned), `author`
+  (display name; `null` when anonymous or deleted), `anonymous`, `subject`, `body` (sanitized
+  text; `null` when deleted), `body_truncated`, `posted`, `edited` (UTC), `deleted`,
+  `requires_approval`, `reply_count` (`null` when the provider sent no reply list).
+
+No user identifier, read status, rating or vote field exists. Exit status 1 with empty stdout on
+failure, including a provider permission denial; an incomplete result exits 0 with
+`complete: false` and a warning on stderr.
+
 ## Safe subprocess integration
 
 PowerShell should keep the streams separate and test `$LASTEXITCODE` before

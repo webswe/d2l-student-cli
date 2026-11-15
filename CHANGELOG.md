@@ -14,6 +14,10 @@ First public version.
   Manager and is never written to a file. The stored session is bound to the origin it was
   created for and is refused for any other configured site.
 - GET-only, HTTPS-only, exact-origin transport with bounded responses and privacy-safe errors.
+- Read-only calendar events (`calendar list`, `calendar upcoming`), quiz metadata and your own
+  attempt summaries (`quizzes list`, `quizzes attempts`), and discussion forums, topics and posts
+  (`discussions forums`, `topics`, `posts`), documented in
+  [docs/ACTIVITIES.md](docs/ACTIVITIES.md).
 - `d2l --version`.
 - Offline test suite on fictional fixtures, strict type checking, reproducible builds, and a
   Windows CI matrix for Python 3.11, 3.12 and 3.13.
@@ -28,4 +32,6 @@ Known limitations:
   independently confirmed against a live institution.
 - Assignment lists may be incomplete for a course that exceeds one server page; grade and
   announcement lists report completeness as `unknown`.
+- Calendar, quiz and discussion commands are covered by offline tests only and have not been
+  confirmed against a live institution; recurring calendar events are reported, not expanded.
 - There is no `logout` command; remove the stored session in Windows Credential Manager.

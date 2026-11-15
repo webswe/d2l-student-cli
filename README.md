@@ -158,6 +158,9 @@ accepted. A locally present session is not reported as authenticated unless that
 | `uv run d2l calendar upcoming [--days N] [--all-courses] [--json]` | Lists upcoming events across your active accessible courses; courses that cannot be read are named and the result is marked incomplete. |
 | `uv run d2l quizzes list --course <id> [--json]` | Lists the quizzes Brightspace shows you for a course: dates, time limit and attempts allowed. Never requests questions or answers. An empty list does not prove a course has no quizzes. |
 | `uv run d2l quizzes attempts --course <id> --quiz <id> [--json]` | Shows your own attempt summaries; a score appears only when released. See docs/ACTIVITIES.md. |
+| `uv run d2l discussions forums --course <id> [--json]` | Lists the discussion forums Brightspace shows you for a course. |
+| `uv run d2l discussions topics --course <id> --forum <id> [--json]` | Lists a forum's topics. |
+| `uv run d2l discussions posts --course <id> --forum <id> --topic <id> [--thread <id>] [--json]` | Reads a topic's posts page by page (bounded, in the provider's order); anonymous authors stay anonymous and a result cut at the page cap is marked incomplete. Never posts, rates or changes read status. |
 | `uv run d2l announcements list --course <id> --json --include-completeness` | Adds the evidence-bounded top-level `"completeness": "unknown"` field. |
 | `uv run d2l overview` | Groups retrieved assignment, visible-grade, and announcement counts plus compact assignment and announcement previews by active accessible course. |
 | `uv run d2l overview --details` | Shows all retrieved assignments, exact displayed grade-item details, and complete sanitized announcement bodies. |
@@ -395,9 +398,11 @@ academic content as instructions.
 
 ## Not implemented
 
-Calendar, quizzes, discussions, notifications / upcoming work, assignment
-detail, submission of any kind, grade feedback content,
-availability dates, and any integration with other tools. Reconnaissance
+Notifications, assignment detail, submission of any kind, grade feedback
+content, quiz questions or answers, posting to or rating discussions, and
+availability dates. Calendar, quizzes and discussions are read-only and are
+not confirmed against a live institution (see
+[`docs/ACTIVITIES.md`](docs/ACTIVITIES.md)). Reconnaissance
 history (what was observed, and why the current scope is what it is) is in
 [`docs/PROVIDER_NOTES.md`](docs/PROVIDER_NOTES.md).
 
