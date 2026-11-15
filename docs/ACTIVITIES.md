@@ -56,3 +56,34 @@ d2l calendar upcoming [--days N] [--all-courses] [--json]
 - **Unverified:** live response shapes, whether `EventType` is present on your version, the
   provider's own inclusive/exclusive window rule (results are re-filtered locally), and any
   tenant-specific calendar permission rules.
+
+## Quizzes
+
+```text
+d2l quizzes list --course <id> [--json]
+d2l quizzes attempts --course <id> --quiz <id> [--json]
+```
+
+- **Routes:** `GET /d2l/api/le/{version}/{orgUnitId}/quizzes/` (scope `quizzing:quizzes:read`) and
+  `GET .../quizzes/{quizId}/attempts/` (scope `quizzing:attempts:read`).
+- **Metadata:** name, description (only if the instructor displays it), active flag, start, end and
+  due dates (UTC), an enforced time limit in minutes, and the attempts allowed (or unlimited).
+  `null` always means the provider did not report a value; it is never zero. A time limit that is
+  not enforced is reported as no limit, and unlimited attempts as no count.
+- **Never requested:** the quiz `questions` routes (they expose answer options), attempt feedback,
+  and anything that starts, answers or submits a quiz. No command can start, answer or submit a quiz.
+- **Attempts:** your own attempt summaries. A score appears only when the provider marks the
+  attempt released (`score_released: true`); otherwise `score` is `null` and `score_released`
+  says whether the provider withheld it (`false`) or did not say (`null`). The documentation does
+  not say whether a student role may call the attempts route. The CLI does not know your user id,
+  so it does not filter by user; instead, if the response contains attempts from more than one
+  user, the command refuses to show any of them.
+- **Status** describes only what the attempt record shows: `completed` (a completion time),
+  `in_progress` (a start time, no completion), or `unknown`.
+- **No false claims:** an empty quiz list does not prove a course has no quizzes (Brightspace
+  shows only quizzes your role may view), and an empty attempt list does not prove a quiz was
+  never attempted. Neither command infers "completed" or "not attempted"; both warn on stderr.
+  A permission denial is an error that says so.
+- **Unverified:** live response shapes, whether students may read the attempts route, whether
+  `IsPublished` is the right release signal for scores on your version, and quiz permission rules
+  at your institution.

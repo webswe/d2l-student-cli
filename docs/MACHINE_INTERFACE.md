@@ -304,6 +304,25 @@ relative path, never fetched).
 Exit status 1 with empty stdout on an actual failure; a partial result exits 0 with
 `complete: false` and a warning on stderr.
 
+### Quizzes
+
+`d2l quizzes list --course <id> --json` prints `{"quizzes": {"course_id", "complete", "quizzes":
+[...]}}` and `d2l quizzes attempts --course <id> --quiz <id> --json` prints `{"quiz_attempts":
+{"course_id", "quiz_id", "complete", "attempts_returned", "attempts": [...]}}`. Details and
+limits are in [ACTIVITIES.md](ACTIVITIES.md). `complete` is `false` when the provider reported
+more pages than were returned.
+
+Quiz record (every key always present; `null` = not reported): `quiz_id`, `course_id`, `name`,
+`description`, `active`, `start_date`, `end_date`, `due_date` (UTC `...Z`), `time_limit_minutes`,
+`time_limit_enforced`, `attempts_allowed`, `attempts_unlimited`.
+
+Attempt record: `attempt_id`, `quiz_id`, `attempt_number`, `started`, `completed` (UTC),
+`status` (`completed`, `in_progress` or `unknown`), `score` (a number only when released, else
+`null`), `score_released` (`true`, `false` or `null`). An empty `attempts` array does not mean
+the quiz was not attempted. No question, answer, feedback or user-identifier field exists.
+
+Exit status 1 with empty stdout on failure, including a provider permission denial.
+
 ## Safe subprocess integration
 
 PowerShell should keep the streams separate and test `$LASTEXITCODE` before

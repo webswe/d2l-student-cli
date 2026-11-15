@@ -156,6 +156,8 @@ accepted. A locally present session is not reported as authenticated unless that
 | `uv run d2l syllabus fetch --course <id> --topic <topicId> --json` | Downloads one listed PDF, Word `.docx` or plain-text file (at most 8 MiB) as base64 JSON. |
 | `uv run d2l calendar list --course <id> [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--json]` | Lists your calendar events for one course in a bounded UTC window (default: next 30 days). Recurring events are reported once, never expanded. See docs/ACTIVITIES.md. |
 | `uv run d2l calendar upcoming [--days N] [--all-courses] [--json]` | Lists upcoming events across your active accessible courses; courses that cannot be read are named and the result is marked incomplete. |
+| `uv run d2l quizzes list --course <id> [--json]` | Lists the quizzes Brightspace shows you for a course: dates, time limit and attempts allowed. Never requests questions or answers. An empty list does not prove a course has no quizzes. |
+| `uv run d2l quizzes attempts --course <id> --quiz <id> [--json]` | Shows your own attempt summaries; a score appears only when released. See docs/ACTIVITIES.md. |
 | `uv run d2l announcements list --course <id> --json --include-completeness` | Adds the evidence-bounded top-level `"completeness": "unknown"` field. |
 | `uv run d2l overview` | Groups retrieved assignment, visible-grade, and announcement counts plus compact assignment and announcement previews by active accessible course. |
 | `uv run d2l overview --details` | Shows all retrieved assignments, exact displayed grade-item details, and complete sanitized announcement bodies. |

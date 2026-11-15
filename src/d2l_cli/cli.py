@@ -72,6 +72,7 @@ from d2l_cli.models.assignment_completeness import (
 from d2l_cli.models.calendar import CalendarEvent, CalendarListing
 from d2l_cli.models.course import Course
 from d2l_cli.models.grade import GradeItem
+from d2l_cli.models.quiz import AttemptListing, Quiz, QuizAttempt, QuizListing
 from d2l_cli.models.syllabus import SyllabusCandidate, SyllabusDocument, SyllabusSearch
 from d2l_cli.providers.brightspace_announcements import BrightspaceAnnouncementProvider
 from d2l_cli.providers.brightspace_assignments import BrightspaceAssignmentProvider
@@ -79,6 +80,8 @@ from d2l_cli.providers.brightspace_calendar import BrightspaceCalendarProvider
 from d2l_cli.providers.brightspace_content import BrightspaceContentProvider
 from d2l_cli.providers.brightspace_courses import BrightspaceCourseProvider
 from d2l_cli.providers.brightspace_grades import BrightspaceGradeProvider
+from d2l_cli.providers.brightspace_quizzes import BrightspaceQuizProvider
+from d2l_cli.quiz_service import QuizService
 from d2l_cli.session_store import SessionStore
 from d2l_cli.syllabus_service import SyllabusService
 
@@ -132,6 +135,8 @@ syllabus_app = typer.Typer(help="Find and fetch a course syllabus document (read
 app.add_typer(syllabus_app, name="syllabus")
 calendar_app = typer.Typer(help="Read your calendar events (read-only).")
 app.add_typer(calendar_app, name="calendar")
+quizzes_app = typer.Typer(help="Read quiz metadata and your own attempts (read-only).")
+app.add_typer(quizzes_app, name="quizzes")
 
 _ANNOUNCEMENT_PREVIEW_CHARS = 120
 
@@ -182,6 +187,11 @@ def _build_syllabus_service(config: Config, headers: Mapping[str, str]) -> Sylla
 def _build_calendar_service(config: Config, headers: Mapping[str, str]) -> CalendarService:
     client = D2LHttpClient(config.base_url, auth_header_provider=lambda: headers)
     return CalendarService(BrightspaceCalendarProvider(client))
+
+
+def _build_quiz_service(config: Config, headers: Mapping[str, str]) -> QuizService:
+    client = D2LHttpClient(config.base_url, auth_header_provider=lambda: headers)
+    return QuizService(BrightspaceQuizProvider(client))
 
 
 def _build_assignment_overview_service(
@@ -1222,6 +1232,168 @@ def calendar_upcoming(
         typer.echo(json.dumps(_calendar_listing_to_json(listing, course_id=None)))
         return
     _print_calendar(listing)
+
+
+def _quiz_to_json(quiz: Quiz) -> dict[str, Any]:
+    return {
+        "quiz_id": quiz.quiz_id,
+        "course_id": quiz.course_id,
+        "name": quiz.name,
+        "description": quiz.description,
+        "active": quiz.active,
+        "start_date": quiz.start_date,
+        "end_date": quiz.end_date,
+        "due_date": quiz.due_date,
+        "time_limit_minutes": quiz.time_limit_minutes,
+        "time_limit_enforced": quiz.time_limit_enforced,
+        "attempts_allowed": quiz.attempts_allowed,
+        "attempts_unlimited": quiz.attempts_unlimited,
+    }
+
+
+def _quiz_attempt_to_json(attempt: QuizAttempt) -> dict[str, Any]:
+    return {
+        "attempt_id": attempt.attempt_id,
+        "quiz_id": attempt.quiz_id,
+        "attempt_number": attempt.attempt_number,
+        "started": attempt.started,
+        "completed": attempt.completed,
+        "status": attempt.status.value,
+        "score": attempt.score,
+        "score_released": attempt.score_released,
+    }
+
+
+def _quiz_attempts_to_json(listing: AttemptListing) -> dict[str, Any]:
+    return {
+        "quiz_attempts": {
+            "course_id": listing.course_id,
+            "quiz_id": listing.quiz_id,
+            "complete": listing.complete,
+            "attempts_returned": len(listing.attempts),
+            "attempts": [_quiz_attempt_to_json(attempt) for attempt in listing.attempts],
+        }
+    }
+
+
+def _warn_quiz_listing(listing: QuizListing) -> None:
+    if listing.has_more:
+        typer.echo(
+            "warning: the provider reported more quizzes than were returned; further pages "
+            "are not followed, so this list is incomplete.",
+            err=True,
+        )
+    if not listing.quizzes:
+        typer.echo(
+            "warning: no quizzes were returned. Brightspace lists only quizzes your role may "
+            "view, so this does not prove the course has none.",
+            err=True,
+        )
+
+
+@quizzes_app.command("list")
+def quizzes_list(
+    course_id: str = typer.Option(
+        ..., "--course", help="Brightspace course (org-unit) id -- see 'd2l courses list'."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit machine-readable JSON only (to stdout)."
+    ),
+) -> None:
+    """List the quizzes Brightspace shows you for one course (metadata only).
+
+    Dates are UTC; ``null`` means the provider did not report a value. Quiz questions, answers
+    and feedback are never requested. An empty list is not proof that a course has no quizzes.
+    """
+    config = _load_cli_config()
+    auth = _build_auth_service(config)
+    try:
+        headers = auth.header_provider()
+    except D2LError as exc:
+        _fail(json_output=json_output, message=str(exc))
+    try:
+        listing = _build_quiz_service(config, headers).list_quizzes(course_id)
+    except ValueError as exc:
+        _fail(json_output=json_output, message=str(exc))
+    except D2LError as exc:
+        _fail(json_output=json_output, message=str(exc))
+
+    _warn_quiz_listing(listing)
+    if json_output:
+        payload = {
+            "quizzes": {
+                "course_id": course_id,
+                "complete": listing.complete,
+                "quizzes": [_quiz_to_json(quiz) for quiz in listing.quizzes],
+            }
+        }
+        typer.echo(json.dumps(payload))
+        return
+    for quiz in listing.quizzes:
+        due = quiz.due_date or "-"
+        if quiz.attempts_unlimited:
+            attempts = "unlimited"
+        else:
+            attempts = "-" if quiz.attempts_allowed is None else str(quiz.attempts_allowed)
+        limit = "-" if quiz.time_limit_minutes is None else f"{quiz.time_limit_minutes}m"
+        typer.echo(
+            f"{quiz.quiz_id}\t{_terminal_text(quiz.name)}\tdue {due}"
+            f"\tattempts {attempts}\tlimit {limit}"
+        )
+
+
+@quizzes_app.command("attempts")
+def quizzes_attempts(
+    course_id: str = typer.Option(
+        ..., "--course", help="Brightspace course (org-unit) id -- see 'd2l courses list'."
+    ),
+    quiz_id: str = typer.Option(..., "--quiz", help="Quiz id from 'd2l quizzes list'."),
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit machine-readable JSON only (to stdout)."
+    ),
+) -> None:
+    """Show your own attempt summaries for one quiz.
+
+    A score appears only when the provider marks the attempt as released. If the provider
+    returns attempts of more than one user the command refuses to show any of them. No attempt
+    feedback, questions or answers are requested. "No attempts returned" does not prove the quiz
+    was never attempted.
+    """
+    config = _load_cli_config()
+    auth = _build_auth_service(config)
+    try:
+        headers = auth.header_provider()
+    except D2LError as exc:
+        _fail(json_output=json_output, message=str(exc))
+    try:
+        listing = _build_quiz_service(config, headers).list_attempts(course_id, quiz_id)
+    except ValueError as exc:
+        _fail(json_output=json_output, message=str(exc))
+    except D2LError as exc:
+        _fail(json_output=json_output, message=str(exc))
+
+    if listing.has_more:
+        typer.echo(
+            "warning: the provider reported more attempts than were returned; further pages "
+            "are not followed, so this list is incomplete.",
+            err=True,
+        )
+    if not listing.attempts:
+        typer.echo(
+            "warning: no attempts were returned. That does not prove the quiz was not attempted; "
+            "the provider may withhold attempts from your role.",
+            err=True,
+        )
+    if json_output:
+        typer.echo(json.dumps(_quiz_attempts_to_json(listing)))
+        return
+    for attempt in listing.attempts:
+        number = "-" if attempt.attempt_number is None else str(attempt.attempt_number)
+        score = "score withheld" if attempt.score is None else f"score {attempt.score:g}"
+        typer.echo(
+            f"attempt {number}\t{attempt.status.value}\tstarted {attempt.started or '-'}"
+            f"\tcompleted {attempt.completed or '-'}\t{score}"
+        )
 
 
 def main() -> None:
