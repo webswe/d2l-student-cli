@@ -67,6 +67,13 @@ def _is_login_target(target: str, origin_host: str) -> bool:
     return parts.path.lower().rstrip("/") == _LOGIN_PATH
 
 
+def is_login_route_url(url: str, *, origin_host: str) -> bool:
+    """Whether ``url`` is the same-host Brightspace login route (``/d2l/login``), query and
+    fragment ignored. Pure; used to refuse treating a still-on-the-login-page browser state as
+    a completed login."""
+    return _is_login_target(url, origin_host)
+
+
 class _InterstitialParser(HTMLParser):
     """Collects head script text and whether ``<body>`` has any content."""
 

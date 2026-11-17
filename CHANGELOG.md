@@ -12,7 +12,10 @@ First public version.
   with a documented JSON mode (see [docs/MACHINE_INTERFACE.md](docs/MACHINE_INTERFACE.md)).
 - Manual browser SSO and MFA login; the resulting session is stored only in Windows Credential
   Manager and is never written to a file. The stored session is bound to the origin it was
-  created for and is refused for any other configured site.
+  created for and is refused for any other configured site. A login is only saved after the
+  captured session is verified with one read-only request; returning to the site's login page is
+  not treated as a completed login, and a failed login leaves any existing stored session
+  unchanged.
 - GET-only, HTTPS-only, exact-origin transport with bounded responses and privacy-safe errors.
 - Experimental read-only calendar events (`calendar list`, `calendar upcoming`), quiz metadata and
   your own verified attempt summaries (`quizzes list`, `quizzes attempts`), and discussion forums,

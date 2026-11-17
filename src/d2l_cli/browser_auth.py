@@ -12,10 +12,14 @@ Login-success detection: Phase 0.5 reconnaissance observed that a
 successful SSO login flow ends with the browser redirected back to the
 Brightspace origin itself (e.g. ``kennesaw.view.usg.edu``) after the
 identity-provider hop (see docs/PROVIDER_NOTES.md, "Hosts contacted after
-authentication"). This module waits for exactly that -- the page's current
-URL returning to the configured Brightspace origin -- using normal browser
-navigation state. It does not probe any endpoint (no whoami, no API call)
-to determine authentication; see docs/THREAT_MODEL.md, "Stop conditions".
+authentication"). This module waits for the page's URL to return to the
+configured Brightspace origin *and* to be something other than the
+Brightspace login route (``/d2l/login``), using normal browser navigation
+state. That is only a candidate completion signal, never proof of
+authentication: the browser step does not probe any endpoint (no whoami, no
+API call; see docs/THREAT_MODEL.md, "Stop conditions"), so
+``AuthService.login`` verifies the captured session independently and saves
+nothing unless that verification succeeds.
 
 All Playwright-specific calls are isolated to ``BrowserAuth.login()``,
 behind small Protocols, so the control flow here is unit-testable with
@@ -34,6 +38,7 @@ import httpx
 
 from d2l_cli.client.errors import SSOLoginFailedError
 from d2l_cli.client.http import _origin_of, _parse_base_url
+from d2l_cli.client.session_expiry import is_login_route_url
 from d2l_cli.secret import SecretStr
 
 DEFAULT_LOGIN_TIMEOUT_SECONDS = 600.0
@@ -126,6 +131,16 @@ def _matches_origin(url: str, expected_origin: tuple[str, str, int]) -> bool:
     return not candidate.userinfo and _origin_of(candidate) == expected_origin
 
 
+def _is_post_login_landing(url: str, expected_origin: tuple[str, str, int]) -> bool:
+    """A URL is only a *candidate* completion signal: it must be on the exact configured origin
+    AND must not be the Brightspace login route. Matching the origin alone is not enough -- the
+    login page itself is on that origin. Even a passing URL is not proof of authentication;
+    ``AuthService.login`` independently verifies the captured session before saving anything."""
+    if not _matches_origin(url, expected_origin):
+        return False
+    return not is_login_route_url(url, origin_host=expected_origin[1])
+
+
 def _cookie_record_from_raw(raw: dict[str, Any]) -> CookieRecord:
     return CookieRecord(
         name=raw["name"],
@@ -192,7 +207,7 @@ class BrowserAuth:
 
         try:
             page.wait_for_url(
-                lambda url: _matches_origin(url, origin),
+                lambda url: _is_post_login_landing(url, origin),
                 timeout=self._login_timeout_seconds * 1000,
             )
         except Exception as exc:

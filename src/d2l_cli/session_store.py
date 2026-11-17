@@ -59,6 +59,7 @@ _RELOGIN = "run 'd2l auth login' to sign in again"
 _CORRUPT = f"stored session is corrupt; {_RELOGIN}"
 _LEGACY = f"stored session has no recorded site and cannot be reused; {_RELOGIN}"
 _VERSION = f"stored session format is not supported; {_RELOGIN}"
+_LOGIN_ORIGIN = "login site does not match the configured site; nothing was saved"
 _MISMATCH = (
     "stored session was created for a different site than the configured one; "
     f"{_RELOGIN} for this site"
@@ -100,7 +101,13 @@ class SessionStore:
         secure storage can't be trusted."""
         self._store.check_available()
 
-    def save(self, material: SessionMaterial) -> None:
+    def require_origin(self, base_url: str) -> None:
+        """Raise unless ``base_url`` canonicalizes to exactly this store's origin. Used before a
+        login so a session can never be captured for one site and bound to another."""
+        if canonical_origin(base_url) != self._origin:
+            raise CredentialPortalMismatchError(_LOGIN_ORIGIN)
+
+    def _serialize(self, material: SessionMaterial) -> str:
         cookie_header = material.cookie_header.reveal()
         cookie_names = list(material.cookie_names)
         if not _valid_cookie_header(cookie_header) or not _valid_cookie_names(cookie_names):
@@ -115,7 +122,15 @@ class SessionStore:
         )
         if len(payload) > _MAX_SERIALIZED_SESSION_CHARS:
             raise CredentialReadError("session material exceeds the size limit")
-        self._store.save(_SESSION_KEY, payload)
+        return payload
+
+    def validate(self, material: SessionMaterial) -> None:
+        """Raise exactly what ``save`` would raise for malformed or oversized material, without
+        writing anything."""
+        self._serialize(material)
+
+    def save(self, material: SessionMaterial) -> None:
+        self._store.save(_SESSION_KEY, self._serialize(material))
 
     def load(self) -> SessionMaterial | None:
         raw = self._store.load(_SESSION_KEY)

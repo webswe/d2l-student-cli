@@ -56,9 +56,16 @@ because providers take an already-built client and tests use `respx`-mocked HTTP
 
 ## Authentication lifecycle
 
-`d2l auth login` opens an isolated Chromium context. The user completes SSO/MFA by hand, the CLI
-verifies the session with one live GET, stores it in Credential Manager, and closes the browser
-context. No password or MFA code is handled. `d2l auth status` re-verifies with a live GET; local
+`d2l auth login` opens an isolated Chromium context. The user completes SSO/MFA by hand. The
+browser returning to the configured origin is only a *candidate* completion signal: the login
+route (`/d2l/login`) on that origin does not count, and even another page does not prove
+authentication. The CLI captures the origin-scoped cookies in memory, closes the browser
+context, and verifies that candidate session with one read-only GET made with those cookies
+(never with a previously stored session). Only if the provider accepts it is the session written
+to Credential Manager; on any failure nothing is saved, no retry is made, and an existing stored
+session is left untouched. The verification request is part of a real login; the offline tests
+replace it with fakes, and no live login has been exercised by this change. No password or MFA
+code is handled. `d2l auth status` re-verifies with a live GET; local
 presence alone is not "authenticated". An expired session surfaces as `AuthExpiredError` with a
 "log in again" message; the tool never logs in on its own.
 

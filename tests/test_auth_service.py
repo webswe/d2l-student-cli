@@ -132,14 +132,25 @@ def test_status_authenticated_when_verification_succeeds() -> None:
     assert result.state == AuthState.AUTHENTICATED
 
 
+def _status_service_with_stored_session(verify: object) -> AuthService:
+    """Store a session through a login that verifies successfully, then return a service over the
+    same store whose provider verification behaves as given (login itself now refuses a session
+    the provider rejects, so a rejecting verifier cannot be used for the login step)."""
+    browser_result = BrowserAuthResult(base_url=BASE_URL, cookies=(_cookie(),))
+    service, backend, browser_auth = _service(browser_result=browser_result)
+    service.login(BASE_URL)
+    return AuthService(
+        session_store=make_session_store(backend, BASE_URL),
+        browser_auth=browser_auth,
+        verify_session=verify,  # type: ignore[arg-type]
+    )
+
+
 def test_status_session_expired_when_provider_rejects() -> None:
     def verify(headers: Mapping[str, str]) -> None:
         raise NotAuthenticatedError("rejected")
 
-    browser_result = BrowserAuthResult(base_url=BASE_URL, cookies=(_cookie(),))
-    service, _, _ = _service(browser_result=browser_result, verify_session=verify)
-    service.login(BASE_URL)
-    result = service.status()
+    result = _status_service_with_stored_session(verify).status()
     assert result.state == AuthState.SESSION_EXPIRED
 
 
@@ -147,10 +158,7 @@ def test_status_provider_unavailable_on_network_error() -> None:
     def verify(headers: Mapping[str, str]) -> None:
         raise NetworkUnavailableError("dns failure")
 
-    browser_result = BrowserAuthResult(base_url=BASE_URL, cookies=(_cookie(),))
-    service, _, _ = _service(browser_result=browser_result, verify_session=verify)
-    service.login(BASE_URL)
-    result = service.status()
+    result = _status_service_with_stored_session(verify).status()
     assert result.state == AuthState.PROVIDER_UNAVAILABLE
 
 
@@ -158,10 +166,7 @@ def test_status_provider_unavailable_on_unexpected_provider_error() -> None:
     def verify(headers: Mapping[str, str]) -> None:
         raise UnexpectedProviderError("500")
 
-    browser_result = BrowserAuthResult(base_url=BASE_URL, cookies=(_cookie(),))
-    service, _, _ = _service(browser_result=browser_result, verify_session=verify)
-    service.login(BASE_URL)
-    result = service.status()
+    result = _status_service_with_stored_session(verify).status()
     assert result.state == AuthState.PROVIDER_UNAVAILABLE
 
 

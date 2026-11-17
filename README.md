@@ -93,7 +93,10 @@ uv run d2l auth login
 1. An isolated Chromium window opens on your institution's Brightspace site.
 2. You complete your institution's normal SSO and MFA in that window. How long this takes depends
    on your institution; the CLI waits for you (up to 10 minutes).
-3. When Brightspace loads, the CLI stores the session (see below) and closes the browser context.
+3. When the browser returns to your Brightspace site (and is no longer on its login page), the CLI
+   closes the browser context and checks the captured session with one read-only request. Only if
+   Brightspace accepts it is the session stored (see below). If the check fails, nothing is saved
+   and any session you already had is left unchanged.
 
 Then check the session and read some data:
 
@@ -136,7 +139,7 @@ accepted. A locally present session is not reported as authenticated unless that
 
 | Command | What it does |
 |---|---|
-| `uv run d2l auth login` | Opens an isolated browser; you complete your institution's normal SSO/MFA by hand. The resulting session is stored securely. |
+| `uv run d2l auth login` | Opens an isolated browser; you complete your institution's normal SSO/MFA by hand. The session is verified with one read-only request and stored securely only if Brightspace accepts it. |
 | `uv run d2l auth status` | Reports whether the stored session is accepted by Brightspace right now (it makes one real read-only request; local presence alone is not "authenticated"). |
 | `uv run d2l courses list` | Lists your enrolled courses (tab-separated: code, name, semester). |
 | `uv run d2l courses list --json` | Same, as JSON on stdout: `{"courses": [...]}`. |

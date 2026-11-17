@@ -11,16 +11,23 @@ from enum import StrEnum
 
 from d2l_cli.browser_auth import BrowserAuth
 from d2l_cli.client.errors import (
+    AuthExpiredError,
     CredentialReadError,
     D2LError,
     NetworkUnavailableError,
     NotAuthenticatedError,
     PermissionDeniedError,
     SecureStorageUnavailableError,
+    SSOLoginFailedError,
     TLSVerificationError,
 )
-from d2l_cli.session_bridge import build_session_material
+from d2l_cli.session_bridge import SessionMaterial, build_session_material
 from d2l_cli.session_store import SessionStore
+
+_NOT_VERIFIED = (
+    "the captured session was not accepted as authenticated by the provider; "
+    "nothing was saved and any previously stored session was left unchanged"
+)
 
 # A callable that exercises a safe, already-authenticated GET request (e.g.
 # BrightspaceCourseProvider.list_courses()) against the given headers, and
@@ -62,14 +69,34 @@ class AuthService:
         self._verify_session = verify_session
 
     def login(self, base_url: str) -> None:
+        """Interactive login. The captured session is a *candidate* held only in memory; it is
+        saved only after it has been independently verified as authenticated. Any failure leaves
+        a previously stored session untouched (nothing is overwritten, cleared or repaired)."""
         # Fail fast on a bad storage backend *before* opening a browser
         # window -- no point making the user complete SSO/MFA only to
         # discover afterwards that the session can't be saved.
         self._session_store.ensure_available()
+        self._session_store.require_origin(base_url)
         result = self._browser_auth.login(base_url)
+        self._session_store.require_origin(result.base_url)
         material = build_session_material(result)
+        self._session_store.validate(material)
+        self._verify_candidate(material)
         self._session_store.save(material)
 
+    def _verify_candidate(self, material: SessionMaterial) -> None:
+        """Verify the *candidate* headers themselves -- never anything loaded from storage."""
+        try:
+            self._verify_session({"Cookie": material.cookie_header.reveal()})
+        except (NotAuthenticatedError, PermissionDeniedError, AuthExpiredError):
+            raise SSOLoginFailedError(_NOT_VERIFIED) from None
+        except D2LError:
+            raise  # network/TLS/provider errors keep their own safe, existing classification
+        except Exception as exc:
+            raise SSOLoginFailedError(
+                f"session verification failed unexpectedly ({exc.__class__.__name__}); "
+                "nothing was saved"
+            ) from None
 
     def header_provider(self) -> Mapping[str, str]:
         """Return the headers to attach to GET requests, or raise
