@@ -153,11 +153,11 @@ belongs in the evidence note.
 ## Decision record
 
 For content TOC and syllabus file retrieval, apply the separate version and authorization gates
-in the [Milestone 1.2 compatibility decision](M1_CONTENT_COMPATIBILITY_DECISION.md). Modern TOC
-selection is fixture-tested only; the file route remains independently bounded. An approved
-authenticated TOC request must establish session acceptance, structure and visibility. A valid
-empty TOC is not evidence of exhaustive course content. Modern-only file retrieval remains
-blocked. This plan does not authorize either request.
+in the [M1.2 TOC decision](M1_CONTENT_COMPATIBILITY_DECISION.md) and
+[M2 file decision](M2_MODERN_FILE_COMPATIBILITY_DECISION.md). Modern selection is fixture-tested
+only; the two routes remain independently bounded. Approved authenticated checks must establish
+session acceptance and permission separately for the TOC and file routes. A valid empty TOC is
+not evidence of exhaustive course content. This plan does not authorize either request.
 
 Keep one private, redacted decision per integration and tenant type: **GO**, **limited scope** or
 **NO-GO**, with date, owner, checked route templates and versions, pass/fail/unknown for each gate,

@@ -27,9 +27,10 @@ from d2l_cli.models.syllabus import ContentTopic, TopicKind
 
 _VERSIONS_PATH = "/d2l/api/versions/"
 _PRODUCT_CODE = "le"
-#: TOC reads may use the documented current range. File downloads retain their original
-#: independently bounded range until that route is validated against an approved provider.
+#: The public contract documents both GET routes in the current range. Keep selectors
+#: route-specific so future route changes cannot silently widen the other capability.
 _TOC_MODERN_RANGE = (82, 120)
+_FILE_MODERN_RANGE = (82, 120)
 _LEGACY_RANGE = (30, 75)
 _VERSION_RE = re.compile(r"1\.([0-9]{1,3})")
 _UNSET = object()
@@ -135,10 +136,12 @@ def select_version(payload: object) -> str:
 
 
 def select_file_version(payload: object) -> str:
-    """Keep file retrieval within the original reviewed version range."""
-    return _newest_in_range(
-        _supported_le_versions(payload), *_LEGACY_RANGE, "FILE_VERSION_UNSUPPORTED"
-    )
+    """Select a documented file-route version, preferring the bounded current range."""
+    versions = _supported_le_versions(payload)
+    modern = [v for v in versions if _FILE_MODERN_RANGE[0] <= v <= _FILE_MODERN_RANGE[1]]
+    if modern:
+        return f"1.{max(modern)}"
+    return _newest_in_range(versions, *_LEGACY_RANGE, "FILE_VERSION_UNSUPPORTED")
 
 
 def parse_toc(payload: object, *, course_id: str) -> tuple[ContentTopic, ...]:

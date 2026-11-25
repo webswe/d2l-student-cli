@@ -26,7 +26,7 @@ Verification status:
 |---|---|---|
 | 1 | `GET /d2l/api/versions/` | Read advertised LE versions; this does not prove acceptance at an authenticated route. |
 | 2 | `GET /d2l/api/le/{tocVersion}/{orgUnitId}/content/toc` | The course's table of contents. Select the newest advertised 1.82-1.120, or fall back to 1.30-1.75. |
-| 3 | `GET /d2l/api/le/{fileVersion}/{orgUnitId}/content/topics/{topicId}/file` | `fetch` only: select the newest advertised 1.30-1.75 independently. If none is advertised, fail before a file request. |
+| 3 | `GET /d2l/api/le/{fileVersion}/{orgUnitId}/content/topics/{topicId}/file` | `fetch` only: select the newest advertised 1.82-1.120, or fall back to 1.30-1.75, independently of the TOC selector. If neither range is advertised, fail before a file request. |
 
 No other URL is ever requested. A topic's own `Url` field is read only for its file extension and is
 never followed. A topic id is fetched only if the same course's table of contents lists it as a
@@ -50,10 +50,9 @@ otherwise the caller chooses.
 required (without it: exit 2, no output). The file name is derived from the table-of-contents title
 reduced to `[A-Za-z0-9._ -]`; a name sent by the server is never used.
 The `api_version` in `find` describes the TOC request; in `fetch` it describes the file request.
-These may differ on a tenant advertising both modern and legacy versions.
-On a modern-only tenant, `find` still lists possible syllabus topics, but marks every document
-candidate `fetchable: false`, adds the fixed `file_version_unsupported` reason, and recommends
-none. `fetch` returns `CONTENT_FILE_VERSION_UNSUPPORTED` without a file request.
+The TOC and file policies currently use the same bounded ranges, but are selected separately
+for their respective routes. A `fetchable` candidate means the CLI can attempt the explicit
+file GET; it does not prove the tenant will accept the session or grant file permission.
 
 ## Safety bounds
 
@@ -71,6 +70,8 @@ none. `fetch` returns `CONTENT_FILE_VERSION_UNSUPPORTED` without a file request.
 - Table of contents: at most 10 levels and 10,000 nodes; titles are sanitized and capped.
 - Requests: relative Brightspace paths only, TLS verified, identity encoding, redirects never
   followed; an expired session is reported as such. Bodies are never logged.
+- If a binary response advertises `Content-Length`, it must be a valid decimal count matching
+  the received bytes. An omitted length remains safe under the streamed 8 MiB bound.
 - Hidden modules, hidden topics and broken topics are not visible to a student and are dropped.
 - TOC lists can omit date-restricted or otherwise unavailable content. A valid empty response is
   not proof that the course has no content, and no TOC result is claimed exhaustively complete.
@@ -98,7 +99,7 @@ differ. Each ends in a safe error, never partial data.
 |---|---|---|
 | `find` says the session is unauthenticated right after a fresh `d2l auth login` | the tenant does not accept the browser session cookie on the Valence `/d2l/api/le/...` routes (the existing reads use web pages and `/d2l/api/lp/...`) | an authentication decision for the owner; **do not** add scopes or tokens without approval |
 | `CONTENT_VERSION_UNSUPPORTED` | No advertised LE version is in the bounded TOC ranges 1.82-1.120 or 1.30-1.75 | the TOC version policy in `brightspace_content.py` |
-| `CONTENT_FILE_VERSION_UNSUPPORTED` | TOC listing succeeded, but no advertised LE version is in the retained file range 1.30-1.75 | modern file retrieval needs a separate compatibility and safety decision |
+| `CONTENT_FILE_VERSION_UNSUPPORTED` | TOC listing succeeded, but no advertised LE version is in the bounded file ranges 1.82-1.120 or 1.30-1.75 | review the advertised versions; do not guess or retry another route |
 | `CONTENT_VERSIONS_SHAPE` | Version discovery has malformed or conflicting LE data | inspect only safe structural evidence; never guess a version |
 | `CONTENT_TOC_SHAPE`, `CONTENT_MODULE_SHAPE`, `CONTENT_TOPIC_*` | the table of contents is shaped differently from the documented schema (or the route returned something else) | the parser and its fixtures |
 | `unexpected status 302` on `fetch` | the tenant serves files through a redirect; redirects are refused by design | needs a deliberate, origin-checked decision |

@@ -1,5 +1,9 @@
 # Milestone 1.2 content TOC compatibility decision
 
+Historical M1.2 decision: the file-route limitation below was superseded by the separately
+reviewed [M2 modern file decision](M2_MODERN_FILE_COMPATIBILITY_DECISION.md). The TOC policy
+and provider-authorization boundary remain in effect.
+
 Status: **offline verified, provider unverified**. No Brightspace tenant, account, session or
 academic record was accessed for this change. This record supplements the
 [provider validation plan](M1_PROVIDER_VALIDATION_PLAN.md).

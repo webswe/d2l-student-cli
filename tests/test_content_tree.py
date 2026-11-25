@@ -143,9 +143,9 @@ def versions(*items: str) -> list[dict[str, object]]:
 @pytest.mark.parametrize(
     ("advertised", "toc_version", "file_version"),
     [
-        (("1.82",), "1.82", None),
-        (("1.82", "1.83", "1.74"), "1.83", "1.74"),
-        (("1.120", "1.121", "1.75"), "1.120", "1.75"),
+        (("1.82",), "1.82", "1.82"),
+        (("1.82", "1.83", "1.74"), "1.83", "1.83"),
+        (("1.120", "1.121", "1.75"), "1.120", "1.120"),
         (("1.74", "1.75", "1.80"), "1.75", "1.75"),
         (("1.121", "1.122"), None, None),
         (("1.20", "1.29"), None, None),
@@ -193,10 +193,14 @@ def test_non_le_product_does_not_authorize_toc() -> None:
         select_version([{"ProductCode": "lp", "SupportedVersions": ["1.82"]}])
 
 
-def test_modern_toc_get_never_implies_modern_file_get() -> None:
+def test_modern_file_selector_uses_only_advertised_bounded_version() -> None:
     class Response:
         def __init__(self, body: object) -> None:
             self.json_body = body
+
+    class FileResponse:
+        content = b"%PDF-1.7\nfictional\n"
+        media_type = "application/pdf"
 
     class Client:
         def __init__(self) -> None:
@@ -210,27 +214,28 @@ def test_modern_toc_get_never_implies_modern_file_get() -> None:
                 {"Modules": [module(1, "Week", topics=[dict(topic(2, "Syllabus"), Url="/s.pdf")])]}
             )
 
-        def get_bytes(self, *args: object, **kwargs: object) -> None:
-            raise AssertionError("file GET must remain blocked")
+        def get_bytes(self, path: str, **kwargs: object) -> FileResponse:
+            self.paths.append(path)
+            return FileResponse()
 
     client = Client()
     provider = BrightspaceContentProvider(client)  # type: ignore[arg-type]
     assert provider.list_tree("25").node_count == 2
     search = SyllabusService(provider).find("25")
-    assert search.api_version == "1.82" and search.recommended_topic_id is None
-    assert len(search.candidates) == 1 and not search.candidates[0].fetchable
-    assert "file_version_unsupported" in search.candidates[0].reasons
-    with pytest.raises(ProviderEndpointChangedError, match="CONTENT_FILE_VERSION_UNSUPPORTED"):
-        SyllabusService(provider).fetch("25", "2")
+    assert search.api_version == "1.82" and search.recommended_topic_id == "2"
+    assert len(search.candidates) == 1 and search.candidates[0].fetchable
+    document = SyllabusService(provider).fetch("25", "2")
+    assert document.api_version == "1.82"
     assert client.paths == [
         "/d2l/api/versions/",
         "/d2l/api/le/1.82/25/content/toc",
         "/d2l/api/le/1.82/25/content/toc",
         "/d2l/api/le/1.82/25/content/toc",
+        "/d2l/api/le/1.82/25/content/topics/2/file",
     ]
 
 
-def test_mixed_versions_use_modern_toc_and_legacy_file_route() -> None:
+def test_mixed_versions_prefer_modern_toc_and_file_route() -> None:
     class Response:
         json_body: object
 
@@ -260,12 +265,12 @@ def test_mixed_versions_use_modern_toc_and_legacy_file_route() -> None:
     client = Client()
     service = SyllabusService(BrightspaceContentProvider(client))  # type: ignore[arg-type]
     assert service.find("25").api_version == "1.82"
-    assert service.fetch("25", "2").api_version == "1.74"
+    assert service.fetch("25", "2").api_version == "1.82"
     assert client.paths == [
         "/d2l/api/versions/",
         "/d2l/api/le/1.82/25/content/toc",
         "/d2l/api/le/1.82/25/content/toc",
-        "/d2l/api/le/1.74/25/content/topics/2/file",
+        "/d2l/api/le/1.82/25/content/topics/2/file",
     ]
 
 
