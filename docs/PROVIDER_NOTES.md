@@ -29,6 +29,7 @@ repository. Rely on the code and its tests.
 | Grades | `/d2l/lms/grades/my_grades/main.d2l` (and the grades index redirect) | server-rendered HTML |
 | Announcements | `/d2l/lms/news/main.d2l`, with `/d2l/le/news/<course>/<item>/view` detail links | server-rendered HTML |
 | Syllabus | `/d2l/api/versions/`, then `/d2l/api/le/<version>/<course>/content/toc` and the topic file route | JSON, then file bytes |
+| Content hierarchy | Same versions and course `content/toc` GET as syllabus discovery | JSON only; browser-session compatibility unverified |
 
 ## Known limits
 

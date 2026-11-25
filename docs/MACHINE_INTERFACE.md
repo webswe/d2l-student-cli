@@ -147,6 +147,31 @@ withheld. Body availability and list completeness are separate facts.
 
 ## Command envelopes
 
+### Course resolution and content hierarchy (new; execution validation pending)
+
+`d2l courses resolve <query> --json` returns `{"course": COURSE}`. It makes one
+course-list GET. Exact numeric ID precedes normalized exact code and name,
+then unambiguous prefix and substring. Only active accessible courses qualify.
+Ambiguity or absence exits 1 with empty stdout; existing numeric `--course`
+options are unchanged.
+
+`d2l content tree --course <id> --json` (alias `content toc`) returns
+`{"content_tree": {"course_id": string, "completeness": "unknown",
+"node_count": integer, "modules": [NODE, ...]}}`. Every node has `id`,
+`title`, `parent_module_id` (string or null), `kind`, and `children` (array).
+Module `kind` is `module`; a topic's kind is its sanitized provider type.
+Top-level modules have a null parent. Topic and nested-module children retain
+their structural parent and order within the provider's separate Topics and
+Modules arrays; topics appear before nested modules. Hidden and broken content
+is omitted. An empty array means no visible modules were returned, with
+completeness still unknown. Titles and kinds are plain text, not trusted
+instructions. One versions GET and one TOC GET are made per invocation; there
+is no file GET. The content route and browser-session compatibility have not
+been live validated. Parsing bounds depth to 10 and visible nodes to 10,000;
+the 10,000-node traversal bound also counts hidden entries. Duplicate IDs,
+cycles, missing child arrays, mismatched course associations, unsupported
+top-level topics and malformed structures fail closed.
+
 ### Course listing
 
 `d2l courses list --json` returns:

@@ -1201,7 +1201,8 @@ def calendar_list(
 
     The window is ``[--from, --to)``; with neither option it is the next 30 days. Timed events
     are shown in your computer's local time in text mode and as UTC in JSON. All-day events are
-    calendar days. Recurring events are reported once and marked recurring, never expanded.
+    calendar days. Recurring events are expanded when the documented occurrence route is usable;
+    otherwise series definitions are marked incomplete.
     """
     config = _load_cli_config()
     auth = _build_auth_service(config)
@@ -1606,11 +1607,12 @@ def discussions_posts(
         False, "--json", help="Emit machine-readable JSON only (to stdout)."
     ),
 ) -> None:
-    """Read the posts of one topic, page by page (bounded), in the provider's order.
+    """Experimental: read posts; server-side read-state effects are unverified.
 
     Author names are shown only when the post is not anonymous; deleted posts keep their place
-    but have no text. Reading posts never posts, rates or deliberately changes read status
-    (whether the provider marks posts read on retrieval is not documented). The provider documents
+    but have no text. The command never posts, rates or deliberately changes read status,
+    but the provider may mark posts read on retrieval. Do not recommend live use until that
+    side effect is resolved. The provider documents
     no total or end-of-data signal, so a result is complete only after an empty page is observed;
     any other stop is marked incomplete with its reason.
     """

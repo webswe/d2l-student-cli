@@ -31,6 +31,8 @@ Dependencies point downward only.
 | Providers | `providers/brightspace_*.py` | Brightspace-specific routes, HTML/JSON parsing, identity validation. The only place layout assumptions live. |
 | Models | `models/*.py` | Validated data classes; they define the JSON shape. |
 | Transport | `client/http.py`, `client/redact.py`, `client/session_expiry.py` | GET-only httpx wrapper: exact origin, TLS on, no auto-redirect, size/encoding bounds, expiry detection. |
+| Course resolution | `course_resolver.py` | Selects one active accessible course from the complete course-list service; no course-specific request until the caller explicitly invokes another command. |
+| Content hierarchy | `content_service.py`, `providers/brightspace_content.py`, `models/content.py` | Uses the existing version and TOC route, preserving module/topic identity without file retrieval. |
 | Errors | `client/errors.py` | `D2LError` hierarchy with privacy-safe messages. |
 | Authentication | `auth_service.py`, `browser_auth.py`, `session_bridge.py` | Interactive login and session capture. |
 | Credential storage | `credentials.py`, `session_store.py`, `secret.py` | Windows Credential Manager only; bounded session records; a secret wrapper that never prints. |

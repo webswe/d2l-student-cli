@@ -143,6 +143,8 @@ accepted. A locally present session is not reported as authenticated unless that
 | `uv run d2l auth status` | Reports whether the stored session is accepted by Brightspace right now (it makes one real read-only request; local presence alone is not "authenticated"). |
 | `uv run d2l courses list` | Lists your enrolled courses (tab-separated: code, name, semester). |
 | `uv run d2l courses list --json` | Same, as JSON on stdout: `{"courses": [...]}`. |
+| `d2l courses resolve <query> [--json]` | Find one active, accessible course by exact id/code/name, then unambiguous prefix or substring. Ambiguity is an error. |
+| `d2l content tree --course <id> [--json]` | Show visible modules and topics without downloading files. `content toc` is an alias. Completeness is unknown. |
 | `uv run d2l assignments list --course <id>` | Lists a course's assignments (tab-separated: name, status, score, due). |
 | `uv run d2l assignments list --course <id> --json` | Same, as JSON on stdout: `{"assignments": [...]}`. |
 | `uv run d2l assignments list --course <id> --json --include-completeness` | Adds evidence-bounded page-size metadata without changing assignment objects. |
@@ -163,7 +165,7 @@ accepted. A locally present session is not reported as authenticated unless that
 | `uv run d2l quizzes attempts --course <id> --quiz <id> [--json]` | **Experimental.** Shows your own attempt summaries only after your identity is verified; the numeric score is never shown. See docs/ACTIVITIES.md. |
 | `uv run d2l discussions forums --course <id> [--json]` | **Experimental.** Lists the discussion forums Brightspace shows you for a course. |
 | `uv run d2l discussions topics --course <id> --forum <id> [--json]` | **Experimental.** Lists a forum's topics. |
-| `uv run d2l discussions posts --course <id> --forum <id> --topic <id> [--thread <id>] [--json]` | **Experimental.** Reads a topic's posts page by page (bounded); a result is complete only after an empty page is observed, anonymous authors stay anonymous, and nothing is posted, rated or deliberately marked read. |
+| `uv run d2l discussions posts --course <id> --forum <id> --topic <id> [--thread <id>] [--json]` | **Experimental; do not recommend for live use yet.** Reads posts page by page (bounded), but whether the provider marks posts read on retrieval is unknown. |
 | `uv run d2l announcements list --course <id> --json --include-completeness` | Adds the evidence-bounded top-level `"completeness": "unknown"` field. |
 | `uv run d2l overview` | Groups retrieved assignment, visible-grade, and announcement counts plus compact assignment and announcement previews by active accessible course. |
 | `uv run d2l overview --details` | Shows all retrieved assignments, exact displayed grade-item details, and complete sanitized announcement bodies. |

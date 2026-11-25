@@ -7,6 +7,10 @@
 > session and the documented Brightspace Valence *Learning Environment* (`le`) and *Platform*
 > (`lp`) APIs; whether a browser-session cookie is accepted by every route below is unknown.
 
+> **Discussion posts require additional review before live use.** The published posts GET
+> contract does not establish whether retrieval marks posts read on the server. GET alone is
+> insufficient evidence that a student-visible read state remains unchanged.
+
 ## What all three share
 
 - **Requests:** `GET` only, to the configured HTTPS origin, with relative paths. No request method
