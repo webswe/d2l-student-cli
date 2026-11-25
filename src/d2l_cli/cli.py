@@ -66,6 +66,7 @@ from d2l_cli.course_service import CourseService
 from d2l_cli.credentials import KeyringCredentialStore
 from d2l_cli.discussion_service import DiscussionService
 from d2l_cli.grade_service import GradeService
+from d2l_cli.markdown_report import render_snapshot_markdown
 from d2l_cli.models.announcement import Announcement
 from d2l_cli.models.assignment import Assignment
 from d2l_cli.models.assignment_completeness import (
@@ -698,6 +699,7 @@ def assignments_overview(
 @app.command("snapshot")
 def academic_snapshot(
     json_output: bool = typer.Option(False, "--json", help="Emit the versioned JSON snapshot."),
+    output_format: str = typer.Option("text", "--format", help="Human report: text or markdown."),
     source: str = typer.Option(
         ",".join(SOURCES),
         "--sources",
@@ -707,6 +709,12 @@ def academic_snapshot(
     all_courses: bool = typer.Option(False, "--all-courses"),
 ) -> None:
     """Read a bounded academic snapshot from existing course-scoped services."""
+    if output_format not in {"text", "markdown"} or (json_output and output_format != "text"):
+        typer.echo(
+            "error: --format accepts text or markdown and cannot be combined with --json",
+            err=True,
+        )
+        raise typer.Exit(code=2)
     selected = tuple(part.strip() for part in source.split(","))
     if (
         not selected
@@ -736,6 +744,8 @@ def academic_snapshot(
     )
     if json_output:
         typer.echo(json.dumps(_snapshot_to_json(result)))
+    elif output_format == "markdown":
+        typer.echo(render_snapshot_markdown(result), nl=False)
     else:
         typer.echo(
             f"Snapshot: {len(result.courses)} course(s), "

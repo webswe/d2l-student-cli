@@ -6,6 +6,16 @@ provider route, file retrieval, grade calculation, or persistent cache.
 `overview --json` retains its existing contract. All example values below are
 fictional.
 
+`d2l snapshot --format markdown` renders the same in-memory normalized result
+without additional provider reads. The text report identifies failed,
+unrequested, and successful sources separately, shows known displayed due
+dates without overdue labels, preserves grade display strings, and labels
+unknown completeness. Provider text is flattened to one line, limited to 500
+characters per field, HTML-escaped, Markdown-escaped, and stripped of
+URL-like tokens. Announcement detail URLs are never printed. This is a human
+format; only `--json` is a machine contract. `--format markdown` cannot be
+combined with `--json`.
+
 ```text
 d2l snapshot --json [--sources assignments,grades,announcements] [--max-courses N] [--all-courses]
 ```
