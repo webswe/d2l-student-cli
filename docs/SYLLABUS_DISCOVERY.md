@@ -24,9 +24,9 @@ Verification status:
 
 | Order | Request | Purpose |
 |---|---|---|
-| 1 | `GET /d2l/api/versions/` | Choose the newest `le` version inside the supported range (1.30-1.75). |
-| 2 | `GET /d2l/api/le/{version}/{orgUnitId}/content/toc` | The course's table of contents. |
-| 3 | `GET /d2l/api/le/{version}/{orgUnitId}/content/topics/{topicId}/file` | `fetch` only: one document. |
+| 1 | `GET /d2l/api/versions/` | Read advertised LE versions; this does not prove acceptance at an authenticated route. |
+| 2 | `GET /d2l/api/le/{tocVersion}/{orgUnitId}/content/toc` | The course's table of contents. Select the newest advertised 1.82-1.120, or fall back to 1.30-1.75. |
+| 3 | `GET /d2l/api/le/{fileVersion}/{orgUnitId}/content/topics/{topicId}/file` | `fetch` only: select the newest advertised 1.30-1.75 independently. If none is advertised, fail before a file request. |
 
 No other URL is ever requested. A topic's own `Url` field is read only for its file extension and is
 never followed. A topic id is fetched only if the same course's table of contents lists it as a
@@ -49,6 +49,11 @@ otherwise the caller chooses.
 `file_name`, `media_type`, `size_bytes`, `sha256`, `api_version` and `content_base64`. `--json` is
 required (without it: exit 2, no output). The file name is derived from the table-of-contents title
 reduced to `[A-Za-z0-9._ -]`; a name sent by the server is never used.
+The `api_version` in `find` describes the TOC request; in `fetch` it describes the file request.
+These may differ on a tenant advertising both modern and legacy versions.
+On a modern-only tenant, `find` still lists possible syllabus topics, but marks every document
+candidate `fetchable: false`, adds the fixed `file_version_unsupported` reason, and recommends
+none. `fetch` returns `CONTENT_FILE_VERSION_UNSUPPORTED` without a file request.
 
 ## Safety bounds
 
@@ -67,10 +72,13 @@ reduced to `[A-Za-z0-9._ -]`; a name sent by the server is never used.
 - Requests: relative Brightspace paths only, TLS verified, identity encoding, redirects never
   followed; an expired session is reported as such. Bodies are never logged.
 - Hidden modules, hidden topics and broken topics are not visible to a student and are dropped.
+- TOC lists can omit date-restricted or otherwise unavailable content. A valid empty response is
+  not proof that the course has no content, and no TOC result is claimed exhaustively complete.
 
 ## Live verification (owner action, value-free)
 
-After `d2l auth login`:
+Only after separate owner approval for a specific tenant, account and route, and after
+confirming institutional permission, the owner may consider:
 
 ```text
 d2l syllabus find --course <id> --json
@@ -89,7 +97,9 @@ differ. Each ends in a safe error, never partial data.
 | What you see | Likely meaning | Where the fix belongs |
 |---|---|---|
 | `find` says the session is unauthenticated right after a fresh `d2l auth login` | the tenant does not accept the browser session cookie on the Valence `/d2l/api/le/...` routes (the existing reads use web pages and `/d2l/api/lp/...`) | an authentication decision for the owner; **do not** add scopes or tokens without approval |
-| `CONTENT_VERSION_UNSUPPORTED` | `/d2l/api/versions/` lists no `le` version in 1.30-1.75 | the supported range in `brightspace_content.py` |
+| `CONTENT_VERSION_UNSUPPORTED` | No advertised LE version is in the bounded TOC ranges 1.82-1.120 or 1.30-1.75 | the TOC version policy in `brightspace_content.py` |
+| `CONTENT_FILE_VERSION_UNSUPPORTED` | TOC listing succeeded, but no advertised LE version is in the retained file range 1.30-1.75 | modern file retrieval needs a separate compatibility and safety decision |
+| `CONTENT_VERSIONS_SHAPE` | Version discovery has malformed or conflicting LE data | inspect only safe structural evidence; never guess a version |
 | `CONTENT_TOC_SHAPE`, `CONTENT_MODULE_SHAPE`, `CONTENT_TOPIC_*` | the table of contents is shaped differently from the documented schema (or the route returned something else) | the parser and its fixtures |
 | `unexpected status 302` on `fetch` | the tenant serves files through a redirect; redirects are refused by design | needs a deliberate, origin-checked decision |
 | `403`, "denied this read" | the account may not read course content, or the course hides it | nothing to fix; upload instead |

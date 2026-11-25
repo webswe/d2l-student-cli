@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from dataclasses import replace
 
 from d2l_cli.client.errors import MalformedResponseError, ProviderEndpointChangedError
 from d2l_cli.docx_guard import DOCX_MEDIA_TYPE, ZIP_MAGIC, validate_docx
@@ -159,6 +160,22 @@ class SyllabusService:
                 "Course content service rejected mismatched course association"
             )
         candidates = rank_candidates(topics)
+        try:
+            self._provider.file_api_version()
+        except ProviderEndpointChangedError:
+            candidates = tuple(
+                replace(
+                    candidate,
+                    fetchable=False,
+                    reasons=tuple(
+                        reason for reason in candidate.reasons if reason != "downloadable_document"
+                    )
+                    + ("file_version_unsupported",),
+                )
+                if candidate.fetchable
+                else candidate
+                for candidate in candidates
+            )
         return SyllabusSearch(
             course_id=course_id,
             api_version=self._provider.api_version(),
@@ -184,5 +201,5 @@ class SyllabusService:
             media_type=_MEDIA_TYPES[kind],
             content=content,
             sha256=hashlib.sha256(content).hexdigest(),
-            api_version=self._provider.api_version(),
+            api_version=self._provider.file_api_version(),
         )

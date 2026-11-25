@@ -10,6 +10,7 @@ import base64
 import hashlib
 import json
 from collections.abc import Mapping
+from itertools import count
 from typing import Any
 
 import httpx
@@ -40,6 +41,7 @@ PDF = b"%PDF-1.7\n% fictional syllabus\n"
 VERSIONS = [
     {"ProductCode": "le", "LatestVersion": "1.80", "SupportedVersions": ["1.40", "1.74", "1.80"]}
 ]
+_MODULE_IDS = count(1)
 
 
 def topic(
@@ -65,7 +67,7 @@ def module(
     **extra: Any,
 ) -> dict[str, Any]:
     return {
-        "ModuleId": 1,
+        "ModuleId": next(_MODULE_IDS),
         "Title": title,
         "Topics": topics or [],
         "Modules": modules or [],
@@ -553,6 +555,9 @@ class _FixedProvider(BrightspaceContentProvider):
         pass
 
     def api_version(self) -> str:
+        return "1.74"
+
+    def file_api_version(self) -> str:
         return "1.74"
 
     def list_topics(self, course_id: str) -> tuple[ContentTopic, ...]:
