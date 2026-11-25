@@ -33,9 +33,9 @@ repository. Rely on the code and its tests.
 
 ## Known limits
 
-- TOC reads select the newest advertised LE 1.82-1.120, with a 1.30-1.75 legacy fallback.
-  Explicit syllabus file retrieval retains the independent 1.30-1.75 policy and fails closed on
-  modern-only tenants. This is an offline compatibility change, not proof of tenant acceptance.
+- TOC reads and explicit syllabus file retrieval each select the newest advertised LE 1.82-1.120,
+  with a separate 1.30-1.75 legacy fallback per route. Neither selection proves authenticated
+  tenant acceptance. See the [M2 file decision](M2_MODERN_FILE_COMPATIBILITY_DECISION.md).
 - A structurally valid TOC can omit content because of provider-side visibility rules. Its
   completeness is `unknown`; an empty response is not proof that no content exists.
 

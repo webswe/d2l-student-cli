@@ -287,6 +287,8 @@ class D2LHttpClient:
             raise ValueError("max_bytes must be positive and within the client ceiling")
         response = self._send_get(path, params, max_bytes=max_bytes)
         self._check_status(response)
+        if response.status_code != 200:
+            raise UnexpectedProviderError("provider returned unexpected document status")
         declared = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
         if declared not in allowed_media_types:
             raise MalformedResponseError("provider response media type was not an allowed type")
@@ -388,10 +390,7 @@ class D2LHttpClient:
                     if (
                         normalized_length.isascii()
                         and normalized_length.isdecimal()
-                        and (
-                            len(normalized_length) > 20
-                            or int(normalized_length) > limit
-                        )
+                        and (len(normalized_length) > 20 or int(normalized_length) > limit)
                     ):
                         raise MalformedResponseError(_RESPONSE_TOO_LARGE_MESSAGE)
 
@@ -400,6 +399,19 @@ class D2LHttpClient:
                     if len(chunk) > limit - len(content):
                         raise MalformedResponseError(_RESPONSE_TOO_LARGE_MESSAGE)
                     content.extend(chunk)
+
+                if max_bytes is not None and 200 <= response.status_code < 300:
+                    # A missing length is safe because streaming is bounded. An advertised
+                    # binary length must agree with the bytes accepted for the document.
+                    if content_length is not None:
+                        normalized_length = content_length.strip()
+                        if (
+                            not normalized_length.isascii()
+                            or not normalized_length.isdecimal()
+                            or len(normalized_length) > 20
+                            or int(normalized_length) != len(content)
+                        ):
+                            raise MalformedResponseError("provider document length was invalid")
 
                 # The request requires identity encoding, so the bounded bytes
                 # are the bytes parsers receive. Remove length/encoding headers

@@ -44,7 +44,7 @@ Every row's live status is **UNVERIFIED** or **BLOCKED**; a synthetic test pass 
 | Discussion forums/topics | LE 1.82–1.120; `/d2l/api/le/{v}/{org}/discussions/forums/`, `.../forums/{forum}/topics/` | Approved student session; forum/topic lists with bounded items. | Fixture-tested; page markers do not imply completeness. | UNVERIFIED: session, student permission, associations and list shapes. | [Discussions](https://docs.valence.desire2learn.com/res/discuss.html) |
 | Discussion posts | LE 1.82–1.120; `.../topics/{topic}/posts/` | Separate explicit approval; one-invocation flag; bounded pages of 100 until empty page or cap. | Fixture-tested guard, parser and pagination; **read-state effect unknown**. | **NO-GO for recommendation** until independent, trustworthy read-state evidence and owner approval. | [Discussions](https://docs.valence.desire2learn.com/res/discuss.html) |
 | Content hierarchy | LE 1.82–1.120 preferred, LE 1.30–1.75 fallback; `/d2l/api/le/{v}/{org}/content/toc` | Approved student session; `TableOfContents` with nested modules/topics; no explicit completeness proof. | OFFLINE VERIFIED: bounded selection and parser with fictional fixtures. | PROVIDER UNVERIFIED: route, cookie, current schema, visibility and TOC completeness. | [Content](https://docs.valence.desire2learn.com/res/content.html) |
-| Syllabus file retrieval | LE 1.30–1.75 only; `/d2l/api/le/{v}/{org}/content/topics/{topic}/file` | Explicit fetch after listed visible file topic; bounded bytes and media types. | OFFLINE VERIFIED: modern TOC does not widen file version; modern-only tenant fails closed. | BLOCKED on modern-only tenants pending separate file-route compatibility review and approved provider evidence. | [Content](https://docs.valence.desire2learn.com/res/content.html) |
+| Syllabus file retrieval | LE 1.82–1.120 preferred, LE 1.30–1.75 fallback; `/d2l/api/le/{v}/{org}/content/topics/{topic}/file` | Explicit fetch after listed visible file topic; bounded bytes and media types. | OFFLINE VERIFIED: independent bounded file selection and fictional document validation; see [M2 decision](M2_MODERN_FILE_COMPATIBILITY_DECISION.md). | PROVIDER UNVERIFIED: authenticated file-route access, permissions, media type and disposition. | [Content](https://docs.valence.desire2learn.com/res/content.html) |
 | Course resolution | Existing course-list route, then local resolver | Complete accessible-course list; exact ID/code/name precedes prefix/substring; ties rejected. | Fictional resolver tests pass; no extra provider request. | UNVERIFIED: course-list completeness and tenant-specific naming. | [Provider notes](PROVIDER_NOTES.md) |
 
 The published docs specify `userId` as an optional quiz-attempt filter and `whoami` as a
@@ -53,7 +53,8 @@ current-user route; they do **not** establish browser-cookie acceptance or the e
 contract does **not** establish that retrieval leaves read state unchanged. The published content
 TOC contract lists LE 1.82+ as current and a `TableOfContents` response. Milestone 1.2 enables
 bounded modern TOC selection offline; authenticated tenant acceptance and exact response behavior
-remain unverified. The file route retains its older independent ceiling.
+remain unverified. M2 independently enables the documented modern file range; provider
+acceptance remains unverified.
 
 ## Private evidence template (blank only in this repository)
 
@@ -106,7 +107,7 @@ before any request, preferably for a test tenant and synthetic student:
 | Discussion forums/topics | Ready for separate test-account validation; permissions and shapes UNVERIFIED. |
 | Discussion posts | NO-GO until an authoritative, non-state-changing observer establishes read-state effect; acknowledgment alone is insufficient. |
 | Content hierarchy | Bounded modern TOC selection is ready for separately approved validation; shape, session, visibility and completeness remain UNVERIFIED. |
-| Syllabus file retrieval | Modern-only tenants remain BLOCKED; the file route is not widened by TOC compatibility. |
+| Syllabus file retrieval | Bounded modern selection is ready for separately approved validation; student permission and real document behavior remain UNVERIFIED. |
 | Course resolution | Local ambiguity handling is ready; provider course-list completeness remains UNVERIFIED. |
 
 For a future discussion experiment, require a synthetic topic and synthetic student with the
