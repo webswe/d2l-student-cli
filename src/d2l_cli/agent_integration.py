@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import subprocess
 from typing import Any
 
@@ -62,7 +63,7 @@ def run_snapshot(
     *, executable: str = "d2l", max_courses: int = 10, timeout_seconds: float = 120
 ) -> dict[str, Any]:
     """Run only the bounded snapshot CLI; authentication remains manual."""
-    if not 1 <= max_courses <= 20 or timeout_seconds <= 0:
+    if not 1 <= max_courses <= 20 or not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
         raise ValueError("invalid snapshot subprocess bound")
     try:
         completed = subprocess.run(  # noqa: S603 - fixed arguments, no shell

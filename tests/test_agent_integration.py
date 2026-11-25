@@ -87,3 +87,9 @@ def test_subprocess_timeout_is_sanitized(monkeypatch: pytest.MonkeyPatch) -> Non
     with pytest.raises(AgentSnapshotError, match="timeout") as info:
         run_snapshot()
     assert "private grade" not in str(info.value)
+
+
+@pytest.mark.parametrize("invalid", [0.0, -1.0, float("inf"), float("nan")])
+def test_subprocess_rejects_nonfinite_or_nonpositive_timeouts(invalid: float) -> None:
+    with pytest.raises(ValueError, match="invalid snapshot subprocess bound"):
+        run_snapshot(timeout_seconds=invalid)
