@@ -2,6 +2,9 @@
 
 The additive `snapshot` v1 envelope is specified in [SNAPSHOT.md](SNAPSHOT.md).
 Existing commands and envelopes retain their contracts.
+The additive, offline `diagnostics --json` command is specified in
+[DIAGNOSTICS.md](DIAGNOSTICS.md). It never reads a saved session or contacts a
+provider.
 
 This document defines the supported subprocess JSON interface of D2L-CLI 0.1.0.
 It describes normalized
