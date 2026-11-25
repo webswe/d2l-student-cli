@@ -185,7 +185,7 @@ def diagnostics(
 @agent_skill_app.command("generate")
 def agent_skill_generate(
     output: Path | None = typer.Option(  # noqa: B008 - Typer options use argument defaults
-        None, "--output", help="New file inside the current directory."
+        None, "--output", help="New file directly in the current directory."
     ),
     preview: bool = typer.Option(False, "--preview", help="Print the template without writing."),
 ) -> None:

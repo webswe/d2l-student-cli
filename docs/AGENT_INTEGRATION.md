@@ -77,8 +77,12 @@ d2l agent skill generate --output AGENT.md
 ```
 
 Preview prints the static template without writing. Generation requires an
-explicit path under the current directory with an existing parent. It rejects
-traversal, symlink parents, existing files and overwrites; it creates only the
+explicit filename directly in the current directory. It rejects
+traversal, symlink paths, existing files and overwrites; it creates only the
 named file. The generated text contains no credentials or student data. The
 user may inspect and manually place it in an agent application's preferred
 location. Generation never edits another application's configuration.
+Exclusive file creation protects the final filename if another process creates
+it after validation. Restricting output to a direct child of the current
+directory avoids a replaceable subdirectory in the path. It does not claim
+protection if another process can replace the current directory itself.

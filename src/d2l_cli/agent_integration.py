@@ -21,8 +21,8 @@ def decode_snapshot_process(exit_code: int, stdout: str) -> dict[str, Any]:
         raise AgentSnapshotError("command_failed" if exit_code else "malformed_json")
     try:
         document = json.loads(stdout)
-    except (ValueError, TypeError) as error:
-        raise AgentSnapshotError("malformed_json") from error
+    except (ValueError, TypeError):
+        raise AgentSnapshotError("malformed_json") from None
     if not isinstance(document, dict):
         raise AgentSnapshotError("malformed_json")
     if type(document.get("schema_version")) is not int or document["schema_version"] != 1:
@@ -72,8 +72,8 @@ def run_snapshot(
             timeout=timeout_seconds,
             check=False,
         )
-    except subprocess.TimeoutExpired as error:
-        raise AgentSnapshotError("timeout") from error
-    except OSError as error:
-        raise AgentSnapshotError("command_unavailable") from error
+    except subprocess.TimeoutExpired:
+        raise AgentSnapshotError("timeout") from None
+    except OSError:
+        raise AgentSnapshotError("command_unavailable") from None
     return decode_snapshot_process(completed.returncode, completed.stdout)

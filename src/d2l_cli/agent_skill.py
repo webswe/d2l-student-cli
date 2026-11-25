@@ -55,26 +55,18 @@ submit work, alter visibility, or attempt provider write operations.
 
 
 def safe_destination(raw: Path, *, cwd: Path) -> Path:
-    """Require an existing, symlink-free parent under the current directory."""
+    """Allow one new file directly in the current directory."""
     root = cwd.resolve(strict=True)
     if ".." in raw.parts:
         raise ValueError("destination traversal is not allowed")
-    lexical = raw if raw.is_absolute() else root / raw
-    current = lexical.anchor
-    for part in lexical.parts[1:-1]:
-        current = str(Path(current) / part)
-        if Path(current).is_symlink():
-            raise ValueError("destination parent must not be a symlink")
-    target = (root / raw).resolve(strict=False)
-    try:
-        relative = target.relative_to(root)
-    except ValueError as error:
-        raise ValueError("destination must remain inside the current directory") from error
-    if not relative.parts or target == root:
-        raise ValueError("destination must name a file")
-    if not target.parent.is_dir():
-        raise ValueError("destination parent must already exist")
-    if target.exists() or target.is_symlink():
+    target = raw if raw.is_absolute() else root / raw
+    # Keeping the parent fixed to cwd removes a replaceable subdirectory from
+    # the path between validation and exclusive creation on Windows.
+    if target.parent != root or not target.name:
+        raise ValueError("destination must be a file in the current directory")
+    # Inspect the lexical final component. Resolving it first would turn a
+    # dangling symlink into its missing target and silently permit creation.
+    if target.is_symlink() or target.exists():
         raise ValueError("destination already exists")
     return target
 

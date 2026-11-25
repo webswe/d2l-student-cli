@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+import d2l_cli.agent_skill as agent_skill
 from d2l_cli.agent_skill import SKILL_TEXT, generate_skill, safe_destination
 from d2l_cli.cli import app
 
@@ -26,6 +27,10 @@ def test_path_traversal_and_outside_absolute_path_are_rejected(tmp_path: Path) -
         safe_destination(tmp_path.parent / "outside.md", cwd=tmp_path)
     with pytest.raises(ValueError):
         safe_destination(Path("missing/AGENT.md"), cwd=tmp_path)
+    existing_dir = tmp_path / "existing"
+    existing_dir.mkdir()
+    with pytest.raises(ValueError):
+        safe_destination(Path("existing/AGENT.md"), cwd=tmp_path)
 
 
 def test_symlink_parent_and_existing_symlink_are_rejected(tmp_path: Path) -> None:
@@ -42,6 +47,58 @@ def test_symlink_parent_and_existing_symlink_are_rejected(tmp_path: Path) -> Non
     file_link.symlink_to(real / "other.md")
     with pytest.raises(ValueError):
         safe_destination(Path("AGENT.md"), cwd=tmp_path)
+
+
+def test_dangling_symlink_cannot_redirect_generation(tmp_path: Path) -> None:
+    target = tmp_path / "uncreated.md"
+    link = tmp_path / "AGENT.md"
+    try:
+        link.symlink_to(target)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks unavailable on this platform")
+    with pytest.raises(ValueError, match="already exists"):
+        generate_skill(Path("AGENT.md"), cwd=tmp_path)
+    assert link.is_symlink()
+    assert not target.exists()
+
+
+def test_final_symlink_check_runs_on_platforms_without_symlink_privilege(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    destination = tmp_path / "AGENT.md"
+    original = Path.is_symlink
+
+    def simulated_link(path: Path) -> bool:
+        return path == destination or original(path)
+
+    monkeypatch.setattr(Path, "is_symlink", simulated_link)
+    with pytest.raises(ValueError, match="already exists"):
+        generate_skill(Path("AGENT.md"), cwd=tmp_path)
+    assert not destination.exists()
+
+
+def test_exclusive_creation_rejects_symlink_added_after_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "uncreated.md"
+    link = tmp_path / "AGENT.md"
+    original = agent_skill.safe_destination
+
+    def race(raw: Path, *, cwd: Path) -> Path:
+        checked = original(raw, cwd=cwd)
+        link.symlink_to(target)
+        return checked
+
+    try:
+        probe = tmp_path / "probe"
+        probe.symlink_to(target)
+        probe.unlink()
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks unavailable on this platform")
+    monkeypatch.setattr(agent_skill, "safe_destination", race)
+    with pytest.raises(FileExistsError):
+        generate_skill(Path("AGENT.md"), cwd=tmp_path)
+    assert not target.exists()
 
 
 def test_preview_has_no_write_and_requires_no_auth(
