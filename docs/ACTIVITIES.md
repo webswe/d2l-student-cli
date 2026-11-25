@@ -78,8 +78,9 @@ d2l calendar upcoming [--days N] [--all-courses] [--json]
   containing unexpanded recurring events is never presented as complete.
 - **Across courses:** one request per active accessible course. A failing course is named with a
   fixed reason code; if every course fails the command fails; an expired session aborts.
-  Events are de-duplicated by `(event id, occurrence id)`, so distinct occurrences are never
-  collapsed. Events tied to an assignment or quiz carry `associated_entity`.
+  Events are de-duplicated by `(course id, event id, occurrence id)`, so equal ids in different
+  courses and distinct occurrences are never collapsed. Events tied to an assignment or quiz carry
+  `associated_entity`.
 - **Unverified:** everything in the matrix, `EventType` availability, and the exact occurrence
   response shape on a real tenant.
 

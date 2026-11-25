@@ -324,7 +324,7 @@ with status 1 and empty stdout; completeness is explicit and never implied.
 | `courses_requested` | integer | Courses queried. |
 | `courses_failed` | array | `{course_id, reason}`; `reason` is `permission_denied`, `rate_limited`, `network_unavailable`, `unsupported_response`, `provider_error` or `error`. |
 | `truncated_courses` | array of string | Courses where the provider reported more pages than were returned. |
-| `duplicates_dropped` | integer | Same `(event id, occurrence id)` counted once across courses. |
+| `duplicates_dropped` | integer | Repeated `(course id, event id, occurrence id)` counted once. |
 | `events` | array | Event records ordered by start. |
 
 Event record (every key present; `null` when unknown): `event_id`, `course_id`, `course_name`,

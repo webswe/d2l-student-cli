@@ -116,11 +116,13 @@ def object_page(
     has_next = False
     items: object = payload
     if isinstance(payload, dict):
+        if "Next" not in payload:
+            raise changed(label, "PAGE_SHAPE")
         items = payload.get("Objects")
         next_value = payload.get("Next")
-        if next_value is not None and not isinstance(next_value, str):
+        if next_value is not None and (not isinstance(next_value, str) or not next_value):
             raise changed(label, "PAGE_SHAPE")
-        has_next = bool(next_value)
+        has_next = next_value is not None
     if not isinstance(items, list) or len(items) > max_items:
         raise changed(label, "PAGE_SHAPE" if not isinstance(items, list) else "ITEM_LIMIT")
     if not all(isinstance(item, dict) for item in items):

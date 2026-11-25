@@ -458,12 +458,13 @@ def test_no_courses_is_an_honest_empty_complete_listing() -> None:
     assert listing.events == () and listing.complete and listing.courses_requested == 0
 
 
-def test_more_pages_and_duplicate_events_across_courses_are_reported() -> None:
+def test_more_pages_and_equal_event_ids_across_courses_are_reported() -> None:
     shared = raw(10)
     provider = FakeProvider({"1": page("1", shared, more=True), "2": page("2", shared)})
     listing = CalendarService(provider).across([make_course("1"), make_course("2")], window())
     assert listing.truncated_courses == ("1",) and not listing.complete
-    assert listing.duplicates_dropped == 1 and len(listing.events) == 1
+    assert listing.duplicates_dropped == 0 and len(listing.events) == 2
+    assert {event.course_id for event in listing.events} == {"1", "2"}
 
 
 def test_events_outside_the_window_are_filtered_even_if_the_provider_returns_them() -> None:
@@ -839,7 +840,7 @@ def test_malformed_occurrence_responses_fail_closed(payload: object, code: str) 
         parse_occurrence_events(payload, course_id=COURSE)
 
 
-def test_distinct_occurrences_of_one_series_are_never_collapsed_but_repeats_are() -> None:
+def test_distinct_occurrences_and_courses_are_never_collapsed() -> None:
     first = parse_occurrence_events(
         [
             with_occ(
@@ -854,8 +855,10 @@ def test_distinct_occurrences_of_one_series_are_never_collapsed_but_repeats_are(
     )
     provider = FakeProvider({"1": first, "2": again})
     listing = CalendarService(provider).across([make_course("1"), make_course("2")], window())
-    assert [(e.event_id, e.occurrence_id) for e in listing.events] == [("5", "1"), ("5", "2")]
-    assert listing.duplicates_dropped == 1 and listing.complete
+    assert [(e.course_id, e.event_id, e.occurrence_id) for e in listing.events] == [
+        ("1", "5", "1"), ("2", "5", "1"), ("1", "5", "2")
+    ]
+    assert listing.duplicates_dropped == 0 and listing.complete
 
 
 def test_an_occurrence_spanning_the_window_start_is_included_by_overlap() -> None:
