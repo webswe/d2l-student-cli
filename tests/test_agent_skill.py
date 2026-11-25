@@ -99,6 +99,25 @@ def test_exclusive_creation_rejects_symlink_added_after_validation(
     with pytest.raises(FileExistsError):
         generate_skill(Path("AGENT.md"), cwd=tmp_path)
     assert not target.exists()
+    assert list(tmp_path.glob(".d2l-agent-*")) == []
+
+
+def test_creation_rejects_file_added_after_validation_without_symlink_privilege(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    destination = tmp_path / "AGENT.md"
+    original = agent_skill.safe_destination
+
+    def race(raw: Path, *, cwd: Path) -> Path:
+        checked = original(raw, cwd=cwd)
+        destination.write_text("existing", encoding="utf-8")
+        return checked
+
+    monkeypatch.setattr(agent_skill, "safe_destination", race)
+    with pytest.raises(FileExistsError):
+        generate_skill(Path("AGENT.md"), cwd=tmp_path)
+    assert destination.read_text(encoding="utf-8") == "existing"
+    assert list(tmp_path.glob(".d2l-agent-*")) == []
 
 
 def test_preview_has_no_write_and_requires_no_auth(

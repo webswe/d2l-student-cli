@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import tempfile
 from pathlib import Path
 
 SKILL_TEXT = """# D2L-CLI agent instructions
@@ -73,7 +75,15 @@ def safe_destination(raw: Path, *, cwd: Path) -> Path:
 
 def generate_skill(raw: Path, *, cwd: Path) -> Path:
     target = safe_destination(raw, cwd=cwd)
-    # Exclusive creation prevents overwriting a file created after validation.
-    with target.open("x", encoding="utf-8", newline="\n") as output:
-        output.write(SKILL_TEXT)
+    # On Windows, open("x") can follow a dangling symlink installed after the
+    # check and create its target. Publish a prepared file with an atomic hard
+    # link instead: link creation fails if the final name exists, including a
+    # dangling symlink. Never write through the user-selected path.
+    descriptor, temporary_name = tempfile.mkstemp(prefix=".d2l-agent-", dir=target.parent)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as output:
+            output.write(SKILL_TEXT)
+        os.link(temporary_name, target)
+    finally:
+        os.unlink(temporary_name)
     return target

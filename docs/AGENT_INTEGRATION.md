@@ -82,7 +82,10 @@ traversal, symlink paths, existing files and overwrites; it creates only the
 named file. The generated text contains no credentials or student data. The
 user may inspect and manually place it in an agent application's preferred
 location. Generation never edits another application's configuration.
-Exclusive file creation protects the final filename if another process creates
-it after validation. Restricting output to a direct child of the current
-directory avoids a replaceable subdirectory in the path. It does not claim
-protection if another process can replace the current directory itself.
+Generation writes a temporary file in the current directory, then atomically
+links it to the requested filename. The temporary file is removed on success
+or failure. Link creation fails if another process creates a file or symlink
+at the final name after validation; filesystems without hard-link support fail
+closed. Restricting output to a direct child of the current directory avoids
+a replaceable subdirectory in the path. This does not protect against another
+process replacing the current directory itself.
