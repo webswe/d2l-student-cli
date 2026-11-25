@@ -27,11 +27,12 @@ from d2l_cli.models.syllabus import ContentTopic, TopicKind
 
 _VERSIONS_PATH = "/d2l/api/versions/"
 _PRODUCT_CODE = "le"
-#: The documented ``toc`` and ``file`` shapes are stable across this range. The ceiling keeps a
-#: future major redesign from being consumed silently; the floor excludes ancient releases.
-_MIN_VERSION = (1, 30)
-_MAX_VERSION = (1, 75)
+#: TOC reads may use the documented current range. File downloads retain their original
+#: independently bounded range until that route is validated against an approved provider.
+_TOC_MODERN_RANGE = (82, 120)
+_LEGACY_RANGE = (30, 75)
 _VERSION_RE = re.compile(r"1\.([0-9]{1,3})")
+_UNSET = object()
 
 MAX_DOCUMENT_BYTES = 8 * 1024 * 1024
 _ALLOWED_FILE_TYPES = frozenset(
@@ -92,25 +93,52 @@ def _extension_of(url: object) -> str | None:
     return extension if _EXTENSION_RE.fullmatch(extension) else None
 
 
-def select_version(payload: object) -> str:
-    """The newest documented ``le`` version inside the supported range, or fail closed."""
+def _supported_le_versions(payload: object) -> set[int]:
     if not isinstance(payload, list):
         raise _changed("VERSIONS_SHAPE")
+    found: set[int] | None = None
     for entry in payload:
-        if not isinstance(entry, dict) or entry.get("ProductCode") != _PRODUCT_CODE:
+        if not isinstance(entry, dict):
+            raise _changed("VERSIONS_SHAPE")
+        if entry.get("ProductCode") != _PRODUCT_CODE:
             continue
+        if found is not None:
+            raise _changed("VERSIONS_SHAPE")
         supported = entry.get("SupportedVersions")
         if not isinstance(supported, list) or not all(isinstance(v, str) for v in supported):
             raise _changed("VERSIONS_SHAPE")
-        usable: list[int] = []
+        found = set()
         for version in supported:
             match = _VERSION_RE.fullmatch(version)
-            if match and _MIN_VERSION[1] <= int(match.group(1)) <= _MAX_VERSION[1]:
-                usable.append(int(match.group(1)))
-        if not usable:
-            raise _changed("VERSION_UNSUPPORTED")
-        return f"1.{max(usable)}"
-    raise _changed("VERSION_UNSUPPORTED")
+            if match is None or str(int(match.group(1))) != match.group(1):
+                raise _changed("VERSIONS_SHAPE")
+            found.add(int(match.group(1)))
+    if found is None:
+        raise _changed("VERSION_UNSUPPORTED")
+    return found
+
+
+def _newest_in_range(versions: set[int], lower: int, upper: int, code: str) -> str:
+    usable = [minor for minor in versions if lower <= minor <= upper]
+    if not usable:
+        raise _changed(code)
+    return f"1.{max(usable)}"
+
+
+def select_version(payload: object) -> str:
+    """Select a bounded TOC version, preferring current versions over legacy versions."""
+    versions = _supported_le_versions(payload)
+    modern = [v for v in versions if _TOC_MODERN_RANGE[0] <= v <= _TOC_MODERN_RANGE[1]]
+    if modern:
+        return f"1.{max(modern)}"
+    return _newest_in_range(versions, *_LEGACY_RANGE, "VERSION_UNSUPPORTED")
+
+
+def select_file_version(payload: object) -> str:
+    """Keep file retrieval within the original reviewed version range."""
+    return _newest_in_range(
+        _supported_le_versions(payload), *_LEGACY_RANGE, "FILE_VERSION_UNSUPPORTED"
+    )
 
 
 def parse_toc(payload: object, *, course_id: str) -> tuple[ContentTopic, ...]:
@@ -122,9 +150,21 @@ def parse_toc(payload: object, *, course_id: str) -> tuple[ContentTopic, ...]:
         raise ValueError("course_id must be a non-empty numeric Brightspace org-unit id")
     if not isinstance(payload, dict) or not isinstance(payload.get("Modules"), list):
         raise _changed("TOC_SHAPE")
+    root_topics = payload.get("Topics", [])
+    if not isinstance(root_topics, list) or root_topics:
+        raise _changed("ROOT_TOPICS")
+
+    def check_course(node: dict[str, Any]) -> None:
+        owner = node.get("OrgUnitId")
+        if owner is not None and (isinstance(owner, bool) or str(owner) != course_id):
+            raise _changed("COURSE_MISMATCH")
+
+    check_course(payload)
 
     topics: list[ContentTopic] = []
     seen: set[str] = set()
+    module_ids: set[str] = set()
+    active: set[int] = set()
     nodes = 0
 
     def walk(modules: list[Any], trail: tuple[str, ...], depth: int) -> None:
@@ -135,43 +175,70 @@ def parse_toc(payload: object, *, course_id: str) -> tuple[ContentTopic, ...]:
             nodes += 1
             if nodes > _MAX_NODES or not isinstance(module, dict):
                 raise _changed("NODE_LIMIT" if nodes > _MAX_NODES else "MODULE_SHAPE")
-            if _optional_flag(module, "IsHidden", "MODULE_FLAG"):
-                continue
-            here = (*trail, _title(module.get("Title"), "MODULE_TITLE"))
-            child_modules = module.get("Modules", [])
-            child_topics = module.get("Topics", [])
-            if not isinstance(child_modules, list) or not isinstance(child_topics, list):
-                raise _changed("MODULE_SHAPE")
-            for topic in child_topics:
-                nodes += 1
-                if nodes > _MAX_NODES or not isinstance(topic, dict):
-                    raise _changed("NODE_LIMIT" if nodes > _MAX_NODES else "TOPIC_SHAPE")
-                topic_id = topic.get("TopicId")
-                if isinstance(topic_id, bool) or not isinstance(topic_id, int) or topic_id < 0:
-                    raise _changed("TOPIC_ID")
-                kind_name = topic.get("TypeIdentifier")
-                if not isinstance(kind_name, str):
-                    raise _changed("TOPIC_TYPE")
-                if _optional_flag(topic, "IsHidden", "TOPIC_FLAG") or _optional_flag(
-                    topic, "IsBroken", "TOPIC_FLAG"
+            if id(module) in active:
+                raise _changed("MODULE_STRUCTURE")
+            active.add(id(module))
+            try:
+                check_course(module)
+                module_id = module.get("ModuleId")
+                if (
+                    isinstance(module_id, bool)
+                    or not isinstance(module_id, int)
+                    or module_id < 0
+                    or len(str(module_id)) > 20
                 ):
+                    raise _changed("NODE_ID")
+                if _optional_flag(module, "IsHidden", "MODULE_FLAG"):
                     continue
-                if str(topic_id) in seen:
-                    raise _changed("DUPLICATE_TOPIC")
-                seen.add(str(topic_id))
-                is_file = kind_name.strip().lower() == "file"
-                topics.append(
-                    ContentTopic(
-                        course_id=course_id,
-                        topic_id=str(topic_id),
-                        title=_title(topic.get("Title"), "TOPIC_TITLE"),
-                        module_path=here,
-                        kind=TopicKind.FILE if is_file else TopicKind.OTHER,
-                        file_extension=_extension_of(topic.get("Url")) if is_file else None,
-                        last_modified=_optional_date(topic),
+                if str(module_id) in module_ids:
+                    raise _changed("DUPLICATE_MODULE")
+                module_ids.add(str(module_id))
+                here = (*trail, _title(module.get("Title"), "MODULE_TITLE"))
+                child_modules = module.get("Modules")
+                child_topics = module.get("Topics")
+                if not isinstance(child_modules, list) or not isinstance(child_topics, list):
+                    raise _changed("MODULE_SHAPE")
+                for topic in child_topics:
+                    nodes += 1
+                    if nodes > _MAX_NODES or not isinstance(topic, dict):
+                        raise _changed("NODE_LIMIT" if nodes > _MAX_NODES else "TOPIC_SHAPE")
+                    check_course(topic)
+                    topic_id = topic.get("TopicId")
+                    if (
+                        isinstance(topic_id, bool)
+                        or not isinstance(topic_id, int)
+                        or topic_id < 0
+                        or len(str(topic_id)) > 20
+                    ):
+                        raise _changed("TOPIC_ID")
+                    identifier = topic.get("Identifier")
+                    if identifier is not None and identifier != str(topic_id):
+                        raise _changed("TOPIC_ID")
+                    kind_name = topic.get("TypeIdentifier")
+                    if not isinstance(kind_name, str):
+                        raise _changed("TOPIC_TYPE")
+                    if _optional_flag(topic, "IsHidden", "TOPIC_FLAG") or _optional_flag(
+                        topic, "IsBroken", "TOPIC_FLAG"
+                    ):
+                        continue
+                    if str(topic_id) in seen:
+                        raise _changed("DUPLICATE_TOPIC")
+                    seen.add(str(topic_id))
+                    is_file = kind_name.strip().lower() == "file"
+                    topics.append(
+                        ContentTopic(
+                            course_id=course_id,
+                            topic_id=str(topic_id),
+                            title=_title(topic.get("Title"), "TOPIC_TITLE"),
+                            module_path=here,
+                            kind=TopicKind.FILE if is_file else TopicKind.OTHER,
+                            file_extension=_extension_of(topic.get("Url")) if is_file else None,
+                            last_modified=_optional_date(topic),
+                        )
                     )
-                )
-            walk(child_modules, here, depth + 1)
+                walk(child_modules, here, depth + 1)
+            finally:
+                active.remove(id(module))
 
     walk(payload["Modules"], (), 1)
     return tuple(topics)
@@ -249,6 +316,9 @@ def parse_content_tree(payload: object, *, course_id: str) -> ContentTree:
                 if topic_id in topic_ids:
                     raise _changed("DUPLICATE_TOPIC")
                 topic_ids.add(topic_id)
+                identifier = topic.get("Identifier")
+                if identifier is not None and identifier != topic_id:
+                    raise _changed("TOPIC_ID")
                 kind = topic.get("TypeIdentifier")
                 if not isinstance(kind, str):
                     raise _changed("TOPIC_TYPE")
@@ -285,13 +355,18 @@ class BrightspaceContentProvider:
 
     def __init__(self, client: D2LHttpClient) -> None:
         self._client = client
-        self._version: str | None = None
+        self._versions: object = _UNSET
+
+    def _version_payload(self) -> object:
+        if self._versions is _UNSET:
+            self._versions = self._client.get(_VERSIONS_PATH).json_body
+        return self._versions
 
     def api_version(self) -> str:
-        if self._version is None:
-            response = self._client.get(_VERSIONS_PATH)
-            self._version = select_version(response.json_body)
-        return self._version
+        return select_version(self._version_payload())
+
+    def file_api_version(self) -> str:
+        return select_file_version(self._version_payload())
 
     def list_topics(self, course_id: str) -> tuple[ContentTopic, ...]:
         if not _is_numeric_id(course_id):
@@ -310,7 +385,7 @@ class BrightspaceContentProvider:
         """Bytes and declared media type of one file topic (the caller proves it is listed)."""
         if not _is_numeric_id(course_id) or not _is_numeric_id(topic_id):
             raise ValueError("course and topic ids must be non-empty numeric ids")
-        path = f"/d2l/api/le/{self.api_version()}/{course_id}/content/topics/{topic_id}/file"
+        path = f"/d2l/api/le/{self.file_api_version()}/{course_id}/content/topics/{topic_id}/file"
         response = self._client.get_bytes(
             path, allowed_media_types=_ALLOWED_FILE_TYPES, max_bytes=MAX_DOCUMENT_BYTES
         )

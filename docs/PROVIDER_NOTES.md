@@ -28,10 +28,16 @@ repository. Rely on the code and its tests.
 | Assignments | `/d2l/lms/dropbox/user/folders_list.d2l` | server-rendered HTML |
 | Grades | `/d2l/lms/grades/my_grades/main.d2l` (and the grades index redirect) | server-rendered HTML |
 | Announcements | `/d2l/lms/news/main.d2l`, with `/d2l/le/news/<course>/<item>/view` detail links | server-rendered HTML |
-| Syllabus | `/d2l/api/versions/`, then `/d2l/api/le/<version>/<course>/content/toc` and the topic file route | JSON, then file bytes |
+| Syllabus | `/d2l/api/versions/`, then `/d2l/api/le/<tocVersion>/<course>/content/toc`; explicit fetch may use a separate `<fileVersion>` for the topic file route | JSON, then bounded file bytes only on fetch |
 | Content hierarchy | Same versions and course `content/toc` GET as syllabus discovery | JSON only; browser-session compatibility unverified |
 
 ## Known limits
+
+- TOC reads select the newest advertised LE 1.82-1.120, with a 1.30-1.75 legacy fallback.
+  Explicit syllabus file retrieval retains the independent 1.30-1.75 policy and fails closed on
+  modern-only tenants. This is an offline compatibility change, not proof of tenant acceptance.
+- A structurally valid TOC can omit content because of provider-side visibility rules. Its
+  completeness is `unknown`; an empty response is not proof that no content exists.
 
 - The assignments page size control is POST-backed and no GET pagination was found, so a course
   that exceeds one page may be incomplete. The CLI reports completeness evidence and never

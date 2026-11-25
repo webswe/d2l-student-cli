@@ -17,7 +17,7 @@ remain **UNVERIFIED**. The approval boundary and integration go/no-go gates rema
 | Quiz listing | Fictional tests cover nullable fields, hidden descriptions, empty lists, paging and errors. | Student-role visibility and release meaning vary by tenant. **Medium.** | Preserve conservative output and separate listing gate. | Yes. |
 | Quiz identity and attempts | Tests require same-session `whoami`, filtered `userId`, and matching `UserId`/`QuizId` on every attempt; scores and feedback stay hidden. | Browser-cookie acceptance, LP/LE ID equivalence and student permission remain unproven. **Critical if guessed.** | Preserve fail-closed behavior; no unfiltered fallback. | Yes. |
 | Discussion posts | Tests cover default refusal before config/auth, one-invocation flag, bounded pages, identity associations, sanitized output and stderr warning. | The posts GET may change server-side read state. **Critical.** | Keep posts no-go pending independent read-state evidence and separate approval. | Yes. |
-| Content hierarchy | Fictional tests cover nesting, cycles, duplicates, hidden nodes, bounds and unknown completeness. | The selector accepts LE 1.30–1.75, while the current public TOC reference marks 1.82+ current and older versions deprecated/obsolete. A 1.82-only tenant fails closed. **High compatibility risk.** | Document the version/shape gap; do not widen versions based on documentation alone. | Yes for tenant versions and shape. |
+| Content hierarchy | Fictional tests cover nesting, cycles, duplicates, hidden nodes, bounds and unknown completeness. | At the time of this review, the selector accepted only LE 1.30–1.75; a 1.82-only tenant failed closed. **High compatibility risk.** | Milestone 1.2 adds a bounded modern TOC policy and keeps file downloads separately bounded; see the [decision record](M1_CONTENT_COMPATIBILITY_DECISION.md). | Yes for tenant versions and shape. |
 | Course resolution | Tests cover exact IDs, ambiguity, hidden courses, Unicode and deterministic stage order. | Matching still depends on the quality and completeness of the course list. **Medium.** | Keep ambiguous matches rejected; validate course-list completeness separately. | Yes. |
 | HTTP and auth boundary | Existing tests cover GET-only methods, HTTPS/TLS, same origin, redirect refusal, response bounds, fixed errors and redaction. | A GET method does not establish freedom from server-side state changes. **High for posts.** | Preserve boundary; do not infer read-state safety. | Yes for server effects. |
 
@@ -33,7 +33,7 @@ markers on an object page.
 
 Version ranges below describe **current implementation selection**, not guaranteed tenant
 support. The public contracts linked in the last column support route and schema research only.
-Every row's live status is **UNVERIFIED**; a synthetic test pass is never a provider pass.
+Every row's live status is **UNVERIFIED** or **BLOCKED**; a synthetic test pass is never a provider pass.
 
 | Capability | Product, route template | Auth context; expected structure and pagination | Offline status / limitation | Live gate and evidence | Public contract |
 |---|---|---|---|---|---|
@@ -43,15 +43,17 @@ Every row's live status is **UNVERIFIED**; a synthetic test pass is never a prov
 | Identity and own attempts | LP 1.49–1.120 `users/whoami`; LE 1.82–1.120 `/d2l/api/le/{v}/{org}/quizzes/{quiz}/attempts/?userId=...` | Same approved session; one `Identifier`, then filtered `QuizAttemptData` page; each record must match user and quiz. | Fixture-tested; no identity or owner proof means no attempt output; score never displayed. | UNVERIFIED: cookie acceptance, ID equivalence, filter enforcement and permission. | [Users](https://docs.valence.desire2learn.com/res/user.html), [Quizzes](https://docs.valence.desire2learn.com/res/quiz.html) |
 | Discussion forums/topics | LE 1.82–1.120; `/d2l/api/le/{v}/{org}/discussions/forums/`, `.../forums/{forum}/topics/` | Approved student session; forum/topic lists with bounded items. | Fixture-tested; page markers do not imply completeness. | UNVERIFIED: session, student permission, associations and list shapes. | [Discussions](https://docs.valence.desire2learn.com/res/discuss.html) |
 | Discussion posts | LE 1.82–1.120; `.../topics/{topic}/posts/` | Separate explicit approval; one-invocation flag; bounded pages of 100 until empty page or cap. | Fixture-tested guard, parser and pagination; **read-state effect unknown**. | **NO-GO for recommendation** until independent, trustworthy read-state evidence and owner approval. | [Discussions](https://docs.valence.desire2learn.com/res/discuss.html) |
-| Content hierarchy | LE 1.30–1.75 selected; `/d2l/api/le/{v}/{org}/content/toc` | Approved student session; `TableOfContents` with nested modules/topics; no explicit completeness proof. | Fixture-tested parser; current version ceiling may reject modern-only tenants. | UNVERIFIED: version, cookie, current schema, visibility and TOC completeness. | [Content](https://docs.valence.desire2learn.com/res/content.html) |
+| Content hierarchy | LE 1.82–1.120 preferred, LE 1.30–1.75 fallback; `/d2l/api/le/{v}/{org}/content/toc` | Approved student session; `TableOfContents` with nested modules/topics; no explicit completeness proof. | OFFLINE VERIFIED: bounded selection and parser with fictional fixtures. | PROVIDER UNVERIFIED: route, cookie, current schema, visibility and TOC completeness. | [Content](https://docs.valence.desire2learn.com/res/content.html) |
+| Syllabus file retrieval | LE 1.30–1.75 only; `/d2l/api/le/{v}/{org}/content/topics/{topic}/file` | Explicit fetch after listed visible file topic; bounded bytes and media types. | OFFLINE VERIFIED: modern TOC does not widen file version; modern-only tenant fails closed. | BLOCKED on modern-only tenants pending separate file-route compatibility review and approved provider evidence. | [Content](https://docs.valence.desire2learn.com/res/content.html) |
 | Course resolution | Existing course-list route, then local resolver | Complete accessible-course list; exact ID/code/name precedes prefix/substring; ties rejected. | Fictional resolver tests pass; no extra provider request. | UNVERIFIED: course-list completeness and tenant-specific naming. | [Provider notes](PROVIDER_NOTES.md) |
 
 The published docs specify `userId` as an optional quiz-attempt filter and `whoami` as a
 current-user route; they do **not** establish browser-cookie acceptance or the equivalence of
 `whoami.Identifier` and attempt `UserId` for this client. The published discussion-post GET
 contract does **not** establish that retrieval leaves read state unchanged. The published content
-TOC contract lists LE 1.82+ as current and a `TableOfContents` response; the implemented older
-version ceiling is a deliberate validation blocker pending shape evidence.
+TOC contract lists LE 1.82+ as current and a `TableOfContents` response. Milestone 1.2 enables
+bounded modern TOC selection offline; authenticated tenant acceptance and exact response behavior
+remain unverified. The file route retains its older independent ceiling.
 
 ## Private evidence template (blank only in this repository)
 
@@ -103,7 +105,8 @@ before any request, preferably for a test tenant and synthetic student:
 | Quiz attempts | NO-GO until same-session identity, ID equivalence, filter and ownership are independently established. |
 | Discussion forums/topics | Ready for separate test-account validation; permissions and shapes UNVERIFIED. |
 | Discussion posts | NO-GO until an authoritative, non-state-changing observer establishes read-state effect; acknowledgment alone is insufficient. |
-| Content hierarchy | Version/shape gate needed before a compatibility claim; LE 1.82-only tenants currently fail closed. |
+| Content hierarchy | Bounded modern TOC selection is ready for separately approved validation; shape, session, visibility and completeness remain UNVERIFIED. |
+| Syllabus file retrieval | Modern-only tenants remain BLOCKED; the file route is not widened by TOC compatibility. |
 | Course resolution | Local ambiguity handling is ready; provider course-list completeness remains UNVERIFIED. |
 
 For a future discussion experiment, require a synthetic topic and synthetic student with the
