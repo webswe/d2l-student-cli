@@ -61,6 +61,7 @@ from d2l_cli.client.errors import D2LError, SSOLoginFailedError
 from d2l_cli.client.http import D2LHttpClient
 from d2l_cli.config import Config, load_config
 from d2l_cli.content_service import ContentService
+from d2l_cli.course_resolver import AmbiguousCourseError, CourseResolutionError, CourseResolver
 from d2l_cli.course_service import CourseService
 from d2l_cli.credentials import KeyringCredentialStore
 from d2l_cli.discussion_service import DiscussionService
@@ -1643,6 +1644,30 @@ def discussions_posts(
             typer.echo(f"   {line}" if line else "")
         if post.body_truncated:
             typer.echo("   [text truncated]")
+
+
+@courses_app.command("resolve")
+def courses_resolve(
+    query: str = typer.Argument(..., help="Course id, code, name, or unambiguous partial name."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON only."),
+) -> None:
+    """Resolve one active, accessible course without making a course-specific request."""
+    config = _load_cli_config()
+    try:
+        headers = _build_auth_service(config).header_provider()
+        course = CourseResolver(_build_course_service(config, headers)).resolve(query)
+    except AmbiguousCourseError as exc:
+        details = ", ".join(
+            f"{_terminal_text(c.id)} {_terminal_text(c.code)} ({_terminal_text(c.semester_name)})"
+            for c in exc.matches[:10]
+        )
+        _fail(json_output=json_output, message=f"course query is ambiguous: {details}")
+    except (D2LError, CourseResolutionError) as exc:
+        _fail(json_output=json_output, message=str(exc))
+    if json_output:
+        typer.echo(json.dumps({"course": _course_to_json(course)}))
+    else:
+        typer.echo(f"{_terminal_text(course.id)}\t{_terminal_text(course.code)}\t{_terminal_text(course.name)}")
 
 
 def _content_node_to_json(node: ContentNode) -> dict[str, Any]:
