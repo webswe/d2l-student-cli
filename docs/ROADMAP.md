@@ -1,9 +1,19 @@
 # Proposed GitHub roadmap (not filed)
 
-These are issue-ready drafts based on the local `feat/calendar-quizzes-discussions` branch plus
-the uncommitted public-academic-coverage worktree. No issue, label or milestone has been created.
+These are issue-ready drafts based on `main` after PR #4 merged at
+`75b6d79677f8ffcea2f84db9a774218c7b9141d6`. No issue, label or milestone has been created.
 Use only the labels listed below. `S`, `M`, `L` estimate relative implementation complexity.
 Each issue must keep the GET-only, same-origin, fail-closed client and fictional-data tests.
+
+Academic coverage implementation for the merged feature scope is complete: calendar, quiz and
+discussion commands, content hierarchy and course resolution are in `main`. Synthetic tests and
+all five post-merge CI checks passed. These results verify the implementation against fictional
+fixtures; they do not verify real Brightspace compatibility. Calendar routes, quiz identity and
+attempt ownership, and discussion read-state effects still require separate, explicit owner approval
+for live provider validation. Use the [Milestone 1 provider validation plan](M1_PROVIDER_VALIDATION_PLAN.md)
+to collect limited evidence and record a go/no-go decision. Discussion-post retrieval already
+requires `--acknowledge-read-state-risk` on each invocation; whether its GET changes server-side
+read state remains unknown.
 
 ## Milestone 1 — Core Academic Coverage
 
@@ -46,14 +56,13 @@ is required before calling post browsing safe. **Depends:** owner-approved valid
 
 ### Validate content hierarchy and course resolver in a complete environment
 
-**Problem/value:** Both are implemented in the review worktree, but pytest collection is blocked
-by a missing installed dependency and TOC browser-session compatibility is unverified.
-**Scope:** Run the added tests and impacted syllabus tests in an independently trusted existing
-environment; check module identity and TOC shape. **Out:** File downloads or automatic fuzzy
-selection. **Accept/test:** Tests pass for nested, duplicate, cyclic, hidden and ambiguous cases;
-one versions plus one TOC GET; old numeric commands keep their schemas.
+**Problem/value:** Both are merged and synthetic tests pass, but TOC browser-session compatibility
+is unverified. **Scope:** Check module identity and TOC shape in an owner-approved environment.
+**Out:** File downloads or automatic fuzzy selection. **Accept/test:** Preserve passing tests for
+nested, duplicate, cyclic, hidden and ambiguous cases; confirm one versions plus one TOC GET;
+old numeric commands keep their schemas.
 **Security/provider evidence:** Value-free TOC shape and session support only; no stored content.
-**Depends:** review and commit of this worktree, trusted test environment.
+**Depends:** separately approved provider validation.
 **Priority/labels/size:** P0; `type:testing`, `area:content`, `priority:P0`,
 `status:needs-provider-evidence`; M.
 
