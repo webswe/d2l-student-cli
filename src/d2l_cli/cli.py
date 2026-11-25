@@ -94,6 +94,7 @@ from d2l_cli.providers.brightspace_grades import BrightspaceGradeProvider
 from d2l_cli.providers.brightspace_quizzes import BrightspaceQuizProvider
 from d2l_cli.quiz_service import QuizService
 from d2l_cli.session_store import SessionStore
+from d2l_cli.snapshot_service import SOURCES, Snapshot, SnapshotService
 from d2l_cli.syllabus_service import SyllabusService
 
 app = typer.Typer(
@@ -245,6 +246,47 @@ def _build_academic_overview_service(
         GradeService(BrightspaceGradeProvider(client)),
         AnnouncementService(BrightspaceAnnouncementProvider(client)),
     )
+
+
+def _build_snapshot_service(config: Config, headers: Mapping[str, str]) -> SnapshotService:
+    client = D2LHttpClient(config.base_url, auth_header_provider=lambda: headers)
+    return SnapshotService(
+        CourseService(BrightspaceCourseProvider(client)),
+        AssignmentService(BrightspaceAssignmentProvider(client)),
+        GradeService(BrightspaceGradeProvider(client)),
+        AnnouncementService(BrightspaceAnnouncementProvider(client)),
+    )
+
+
+def _snapshot_to_json(snapshot: Snapshot) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "generated_at": snapshot.generated_at,
+        "requested_sources": list(snapshot.requested_sources),
+        "successful_sources": list(snapshot.successful_sources),
+        "partial": snapshot.partial,
+        "service_calls": snapshot.service_calls,
+        "http_request_count": None,
+        "courses": [
+            {
+                "course": _course_to_json(entry.course),
+                "sources": {
+                    name: {
+                        "status": state.status,
+                        "completeness": state.completeness,
+                        "error_code": state.error_code,
+                        "observed_row_count": state.observed_row_count,
+                        "page_size_ceiling": state.page_size_ceiling,
+                    }
+                    for name, state in entry.sources.items()
+                },
+                "assignments": [_assignment_to_json(a) for a in entry.assignments],
+                "grade_items": [_grade_item_to_json(g) for g in entry.grade_items],
+                "announcements": [_announcement_to_json(n) for n in entry.announcements],
+            }
+            for entry in snapshot.courses
+        ],
+    }
 
 
 def _course_to_json(course: Course) -> dict[str, Any]:
@@ -651,6 +693,68 @@ def assignments_overview(
             f"{_terminal_text(item.course.name)}\t"
             f"{_terminal_text(item.assignment.name)}\t{due}"
         )
+
+
+@app.command("snapshot")
+def academic_snapshot(
+    json_output: bool = typer.Option(False, "--json", help="Emit the versioned JSON snapshot."),
+    source: str = typer.Option(
+        ",".join(SOURCES),
+        "--sources",
+        help="Comma-separated sources: assignments,grades,announcements.",
+    ),
+    max_courses: int = typer.Option(10, "--max-courses", help="Maximum selected courses (1-20)."),
+    all_courses: bool = typer.Option(False, "--all-courses"),
+) -> None:
+    """Read a bounded academic snapshot from existing course-scoped services."""
+    selected = tuple(part.strip() for part in source.split(","))
+    if (
+        not selected
+        or len(set(selected)) != len(selected)
+        or any(s not in SOURCES for s in selected)
+    ):
+        typer.echo("error: --sources requires unique supported sources", err=True)
+        raise typer.Exit(code=2)
+    if not 1 <= max_courses <= 20:
+        typer.echo("error: --max-courses must be between 1 and 20", err=True)
+        raise typer.Exit(code=2)
+    config = _load_cli_config()
+    try:
+        headers = _build_auth_service(config).header_provider()
+        result = _build_snapshot_service(config, headers).get_snapshot(
+            sources=selected, active_only=not all_courses, max_courses=max_courses
+        )
+    except D2LError as exc:
+        _fail(json_output=json_output, message=str(exc))
+    except ValueError:
+        _fail(json_output=json_output, message="snapshot scope or normalized data is invalid")
+
+    successes = sum(
+        entry.sources[name].status == "success"
+        for entry in result.courses
+        for name in result.requested_sources
+    )
+    if json_output:
+        typer.echo(json.dumps(_snapshot_to_json(result)))
+    else:
+        typer.echo(
+            f"Snapshot: {len(result.courses)} course(s), "
+            f"{successes} successful source read(s), partial={str(result.partial).lower()}"
+        )
+        for entry in result.courses:
+            typer.echo(f"  {_terminal_text(entry.course.code)}:")
+            for name, count in (
+                ("assignments", len(entry.assignments)),
+                ("grades", len(entry.grade_items)),
+                ("announcements", len(entry.announcements)),
+            ):
+                state = entry.sources[name]
+                detail = f"{count} returned" if state.status == "success" else state.status
+                typer.echo(f"    {name}: {detail}")
+    if result.partial:
+        typer.echo("warning: snapshot contains failed sources; inspect source statuses", err=True)
+    if result.partial and successes == 0:
+        raise typer.Exit(code=1)
 
 
 @app.command("overview")

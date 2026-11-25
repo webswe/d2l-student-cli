@@ -1,5 +1,8 @@
 # Machine-readable interface
 
+The additive `snapshot` v1 envelope is specified in [SNAPSHOT.md](SNAPSHOT.md).
+Existing commands and envelopes retain their contracts.
+
 This document defines the supported subprocess JSON interface of D2L-CLI 0.1.0.
 It describes normalized
 output, not Brightspace's undocumented responses. Commands and fields outside
@@ -14,6 +17,7 @@ d2l assignments overview --json [--chronological] [--all-courses] [--include-com
 d2l grades list --course <id> --json [--include-completeness]
 d2l announcements list --course <id> --json [--include-completeness]
 d2l overview --json [--all-courses]
+d2l snapshot --json [--sources assignments,grades,announcements] [--max-courses N] [--all-courses]
 d2l syllabus find --course <id> --json
 d2l syllabus fetch --course <id> --topic <topicId> --json
 ```

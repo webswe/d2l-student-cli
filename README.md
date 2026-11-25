@@ -170,6 +170,7 @@ accepted. A locally present session is not reported as authenticated unless that
 | `uv run d2l overview` | Groups retrieved assignment, visible-grade, and announcement counts plus compact assignment and announcement previews by active accessible course. |
 | `uv run d2l overview --details` | Shows all retrieved assignments, exact displayed grade-item details, and complete sanitized announcement bodies. |
 | `uv run d2l overview --json` | Emits the full grouped academic overview as JSON. |
+| `uv run d2l snapshot --json` | Emits a bounded, versioned academic snapshot with per-source statuses. |
 | `uv run d2l overview --all-courses` | Includes inactive accessible courses; inaccessible courses remain excluded. |
 
 `<id>` is the Brightspace course (org-unit) id shown in the `courses list --json` output (`id`). Placeholders only

@@ -1,5 +1,13 @@
 # Threat Model
 
+The opt-in `snapshot` command caps selected courses at 20, rejects duplicate
+or malformed course IDs, validates each normalized record's course
+association, and reports failed sources without provider exception text.
+It makes no file reads, downloads, discussion-post requests, or academic
+record writes. Its `service_calls` count is local invocation accounting;
+HTTP request count remains unknown. Academic text in JSON remains untrusted
+and must be escaped by any downstream renderer.
+
 > Status: the controls described here are implemented; the current release's guarantees and
 > limits are summarized in the README "Security model" and `SECURITY.md`.
 

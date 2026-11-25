@@ -1,5 +1,14 @@
 # Architecture
 
+## Versioned academic snapshot
+
+`SnapshotService` composes the existing course, assignment, grade, and
+announcement services using a shared GET-only client supplied by the CLI.
+It lists courses once and calls each selected source once per bounded course.
+It adds no route or authentication path. Per-course source status distinguishes
+failures from empty and unrequested results. The existing `overview` contract
+remains intact. See [the snapshot contract](SNAPSHOT.md).
+
 D2L-CLI is a local, single-process Python CLI. It has no server, daemon, cache, database or
 plugin system, and none is planned. This document describes the code **as it is**. It was
 verified against the import graph: there are no import cycles, `providers` never import `cli`,
