@@ -30,6 +30,7 @@ from __future__ import annotations
 import base64
 import json
 from collections.abc import Mapping
+from datetime import UTC, date, datetime
 from typing import Any, NoReturn
 
 import typer
@@ -50,11 +51,20 @@ from d2l_cli.assignment_overview_service import (
 from d2l_cli.assignment_service import AssignmentService
 from d2l_cli.auth_service import AuthService, AuthState
 from d2l_cli.browser_auth import BrowserAuth
+from d2l_cli.calendar_service import (
+    CalendarService,
+    format_instant,
+    make_window,
+    upcoming_window,
+)
 from d2l_cli.client.errors import D2LError, SSOLoginFailedError
 from d2l_cli.client.http import D2LHttpClient
 from d2l_cli.config import Config, load_config
+from d2l_cli.content_service import ContentService
+from d2l_cli.course_resolver import AmbiguousCourseError, CourseResolutionError, CourseResolver
 from d2l_cli.course_service import CourseService
 from d2l_cli.credentials import KeyringCredentialStore
+from d2l_cli.discussion_service import DiscussionService
 from d2l_cli.grade_service import GradeService
 from d2l_cli.models.announcement import Announcement
 from d2l_cli.models.assignment import Assignment
@@ -62,14 +72,27 @@ from d2l_cli.models.assignment_completeness import (
     AssignmentCompleteness,
     AssignmentCompletenessStatus,
 )
+from d2l_cli.models.calendar import CalendarEvent, CalendarListing
+from d2l_cli.models.content import ContentNode
 from d2l_cli.models.course import Course
+from d2l_cli.models.discussion import (
+    DiscussionForum,
+    DiscussionPost,
+    DiscussionPosts,
+    DiscussionTopic,
+)
 from d2l_cli.models.grade import GradeItem
+from d2l_cli.models.quiz import AttemptListing, Quiz, QuizAttempt, QuizListing
 from d2l_cli.models.syllabus import SyllabusCandidate, SyllabusDocument, SyllabusSearch
 from d2l_cli.providers.brightspace_announcements import BrightspaceAnnouncementProvider
 from d2l_cli.providers.brightspace_assignments import BrightspaceAssignmentProvider
+from d2l_cli.providers.brightspace_calendar import BrightspaceCalendarProvider
 from d2l_cli.providers.brightspace_content import BrightspaceContentProvider
 from d2l_cli.providers.brightspace_courses import BrightspaceCourseProvider
+from d2l_cli.providers.brightspace_discussions import BrightspaceDiscussionProvider
 from d2l_cli.providers.brightspace_grades import BrightspaceGradeProvider
+from d2l_cli.providers.brightspace_quizzes import BrightspaceQuizProvider
+from d2l_cli.quiz_service import QuizService
 from d2l_cli.session_store import SessionStore
 from d2l_cli.syllabus_service import SyllabusService
 
@@ -121,6 +144,14 @@ app.add_typer(announcements_app, name="announcements")
 
 syllabus_app = typer.Typer(help="Find and fetch a course syllabus document (read-only).")
 app.add_typer(syllabus_app, name="syllabus")
+calendar_app = typer.Typer(help="Read your calendar events (read-only).")
+app.add_typer(calendar_app, name="calendar")
+quizzes_app = typer.Typer(help="Read quiz metadata and your own attempts (read-only).")
+app.add_typer(quizzes_app, name="quizzes")
+discussions_app = typer.Typer(help="Read discussion forums, topics and posts (read-only).")
+app.add_typer(discussions_app, name="discussions")
+content_app = typer.Typer(help="Read the course content hierarchy (no downloads).")
+app.add_typer(content_app, name="content")
 
 _ANNOUNCEMENT_PREVIEW_CHARS = 120
 
@@ -166,6 +197,26 @@ def _build_announcement_service(config: Config, headers: Mapping[str, str]) -> A
 def _build_syllabus_service(config: Config, headers: Mapping[str, str]) -> SyllabusService:
     client = D2LHttpClient(config.base_url, auth_header_provider=lambda: headers)
     return SyllabusService(BrightspaceContentProvider(client))
+
+
+def _build_content_service(config: Config, headers: Mapping[str, str]) -> ContentService:
+    client = D2LHttpClient(config.base_url, auth_header_provider=lambda: headers)
+    return ContentService(BrightspaceContentProvider(client))
+
+
+def _build_calendar_service(config: Config, headers: Mapping[str, str]) -> CalendarService:
+    client = D2LHttpClient(config.base_url, auth_header_provider=lambda: headers)
+    return CalendarService(BrightspaceCalendarProvider(client))
+
+
+def _build_quiz_service(config: Config, headers: Mapping[str, str]) -> QuizService:
+    client = D2LHttpClient(config.base_url, auth_header_provider=lambda: headers)
+    return QuizService(BrightspaceQuizProvider(client))
+
+
+def _build_discussion_service(config: Config, headers: Mapping[str, str]) -> DiscussionService:
+    client = D2LHttpClient(config.base_url, auth_header_provider=lambda: headers)
+    return DiscussionService(BrightspaceDiscussionProvider(client))
 
 
 def _build_assignment_overview_service(
@@ -1005,6 +1056,680 @@ def syllabus_fetch(
     except D2LError as exc:
         _fail(json_output=json_output, message=str(exc))
     typer.echo(json.dumps(_syllabus_document_to_json(document)))
+
+
+def _calendar_instant(moment: datetime) -> str:
+    return moment.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _event_to_json(event: CalendarEvent) -> dict[str, Any]:
+    entity = event.associated_entity
+    return {
+        "event_id": event.event_id,
+        "course_id": event.course_id,
+        "course_name": event.course_name,
+        "course_code": event.course_code,
+        "title": event.title,
+        "description": event.description,
+        "all_day": event.all_day,
+        "start_utc": event.start_utc,
+        "end_utc": event.end_utc,
+        "start_day": event.start_day,
+        "end_day": event.end_day,
+        "recurring": event.recurring,
+        "occurrence_id": event.occurrence_id,
+        "occurrences_expanded": event.occurrences_expanded,
+        "event_type": event.event_type,
+        "associated_entity": (
+            None
+            if entity is None
+            else {"type": entity.entity_type, "id": entity.entity_id}
+        ),
+        "view_reference": event.view_reference,
+    }
+
+
+def _calendar_listing_to_json(listing: CalendarListing, *, course_id: str | None) -> dict[str, Any]:
+    body: dict[str, Any] = {}
+    if course_id is not None:
+        body["course_id"] = course_id
+    body.update(
+        {
+            "window": {
+                "start": _calendar_instant(listing.window.start),
+                "end": _calendar_instant(listing.window.end),
+            },
+            "complete": listing.complete,
+            "incomplete_reasons": list(listing.incomplete_reasons),
+            "recurrence": {
+                "mode": listing.recurrence_mode,
+                "unexpanded_recurring_events": listing.unexpanded_recurring,
+                "occurrence_route_fallback_courses": list(listing.occurrence_fallback_courses),
+            },
+            "courses_requested": listing.courses_requested,
+            "courses_failed": [
+                {"course_id": failure.course_id, "reason": failure.reason}
+                for failure in listing.courses_failed
+            ],
+            "truncated_courses": list(listing.truncated_courses),
+            "duplicates_dropped": listing.duplicates_dropped,
+            "events": [_event_to_json(event) for event in listing.events],
+        }
+    )
+    return {"calendar": body}
+
+
+def _utc_now() -> datetime:
+    """The current UTC time; a single seam so tests inject a fixed clock."""
+    return datetime.now(UTC)
+
+
+def _warn_calendar_incomplete(listing: CalendarListing) -> None:
+    if listing.unexpanded_recurring:
+        typer.echo(
+            f"warning: {listing.unexpanded_recurring} recurring event(s) are shown only as "
+            "series definitions; their occurrences were not retrieved, so this schedule is "
+            "incomplete.",
+            err=True,
+        )
+    for failure in listing.courses_failed:
+        typer.echo(
+            f"warning: calendar for course {failure.course_id} could not be read "
+            f"({failure.reason}); results are incomplete.",
+            err=True,
+        )
+    for course_id in listing.truncated_courses:
+        typer.echo(
+            f"warning: course {course_id} has more calendar events than were returned; "
+            "further pages are not followed, so results are incomplete.",
+            err=True,
+        )
+
+
+def _parse_calendar_date(value: str | None, option: str) -> date | None:
+    if value is None:
+        return None
+    if len(value) != 10 or value[4] != "-" or value[7] != "-":
+        raise ValueError(f"{option} must be a date written YYYY-MM-DD")
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date()
+    except ValueError:
+        raise ValueError(f"{option} must be a real calendar date written YYYY-MM-DD") from None
+
+
+def _calendar_event_line(event: CalendarEvent) -> str:
+    label = event.course_code or event.course_id
+    if event.all_day:
+        assert event.start_day is not None
+        when = f"{event.start_day} (all day)"
+    else:
+        assert event.start_utc is not None
+        when = format_instant(event.start_utc)
+        if event.end_utc is not None:
+            when = f"{when} to {format_instant(event.end_utc)}"
+    flags = " [recurring]" if event.recurring else ""
+    return f"{when}\t{label}\t{_terminal_text(event.title)}{flags}"
+
+
+def _print_calendar(listing: CalendarListing) -> None:
+    _warn_calendar_incomplete(listing)
+    if not listing.events:
+        typer.echo("No calendar events found in this window.")
+        if not listing.complete:
+            typer.echo("(Some calendars could not be read, so this is not a complete answer.)")
+        return
+    for event in listing.events:
+        typer.echo(_calendar_event_line(event))
+
+
+@calendar_app.command("list")
+def calendar_list(
+    course_id: str = typer.Option(
+        ..., "--course", help="Brightspace course (org-unit) id -- see 'd2l courses list'."
+    ),
+    start: str | None = typer.Option(
+        None, "--from", help="First day of the window, YYYY-MM-DD (UTC). Default: today."
+    ),
+    end: str | None = typer.Option(
+        None, "--to", help="Day after the window's last day, YYYY-MM-DD (UTC, exclusive)."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit machine-readable JSON only (to stdout)."
+    ),
+) -> None:
+    """List your calendar events for one course in a bounded UTC window.
+
+    The window is ``[--from, --to)``; with neither option it is the next 30 days. Timed events
+    are shown in your computer's local time in text mode and as UTC in JSON. All-day events are
+    calendar days. Recurring events are expanded when the documented occurrence route is usable;
+    otherwise series definitions are marked incomplete.
+    """
+    config = _load_cli_config()
+    auth = _build_auth_service(config)
+    try:
+        window = make_window(
+            _parse_calendar_date(start, "--from"),
+            _parse_calendar_date(end, "--to"),
+            now=_utc_now(),
+        )
+    except ValueError as exc:
+        _fail(json_output=json_output, message=str(exc))
+    try:
+        headers = auth.header_provider()
+    except D2LError as exc:
+        _fail(json_output=json_output, message=str(exc))
+    try:
+        listing = _build_calendar_service(config, headers).for_course(course_id, window)
+    except ValueError as exc:
+        _fail(json_output=json_output, message=str(exc))
+    except D2LError as exc:
+        _fail(json_output=json_output, message=str(exc))
+
+    if json_output:
+        _warn_calendar_incomplete(listing)
+        typer.echo(json.dumps(_calendar_listing_to_json(listing, course_id=course_id)))
+        return
+    _print_calendar(listing)
+
+
+@calendar_app.command("upcoming")
+def calendar_upcoming(
+    days: int = typer.Option(
+        14, "--days", help="Look ahead this many elapsed 24-hour periods from now (1-366)."
+    ),
+    all_courses: bool = typer.Option(
+        False, "--all-courses", help="Include inactive accessible courses."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit machine-readable JSON only (to stdout)."
+    ),
+) -> None:
+    """List upcoming calendar events across your active accessible courses.
+
+    One calendar request is made per selected course. A course that cannot be read is named in
+    the output and the result is marked incomplete; if every course fails the command fails.
+    """
+    config = _load_cli_config()
+    auth = _build_auth_service(config)
+    try:
+        window = upcoming_window(days, now=_utc_now())
+    except ValueError as exc:
+        _fail(json_output=json_output, message=str(exc))
+    try:
+        headers = auth.header_provider()
+    except D2LError as exc:
+        _fail(json_output=json_output, message=str(exc))
+    try:
+        courses = _build_course_service(config, headers).list_courses()
+        selected = [
+            course
+            for course in courses
+            if course.can_access and (all_courses or course.is_active)
+        ]
+        listing = _build_calendar_service(config, headers).across(selected, window)
+    except ValueError as exc:
+        _fail(json_output=json_output, message=str(exc))
+    except D2LError as exc:
+        _fail(json_output=json_output, message=str(exc))
+
+    if json_output:
+        _warn_calendar_incomplete(listing)
+        typer.echo(json.dumps(_calendar_listing_to_json(listing, course_id=None)))
+        return
+    _print_calendar(listing)
+
+
+def _quiz_to_json(quiz: Quiz) -> dict[str, Any]:
+    return {
+        "quiz_id": quiz.quiz_id,
+        "course_id": quiz.course_id,
+        "name": quiz.name,
+        "description": quiz.description,
+        "active": quiz.active,
+        "start_date": quiz.start_date,
+        "end_date": quiz.end_date,
+        "due_date": quiz.due_date,
+        "time_limit_minutes": quiz.time_limit_minutes,
+        "time_limit_enforced": quiz.time_limit_enforced,
+        "attempts_allowed": quiz.attempts_allowed,
+        "attempts_unlimited": quiz.attempts_unlimited,
+    }
+
+
+def _quiz_attempt_to_json(attempt: QuizAttempt) -> dict[str, Any]:
+    return {
+        "attempt_id": attempt.attempt_id,
+        "quiz_id": attempt.quiz_id,
+        "attempt_number": attempt.attempt_number,
+        "started": attempt.started,
+        "completed": attempt.completed,
+        "status": attempt.status.value,
+        "attempt_completed": attempt.attempt_completed,
+        "feedback_published": attempt.feedback_published,
+        # Release of the numeric score is not documented, so it is never shown: null = not
+        # established (not zero, not withheld by the instructor).
+        "score_released": None,
+        "score": None,
+    }
+
+
+def _quiz_attempts_to_json(listing: AttemptListing) -> dict[str, Any]:
+    return {
+        "quiz_attempts": {
+            "course_id": listing.course_id,
+            "quiz_id": listing.quiz_id,
+            "complete": listing.complete,
+            "attempts_returned": len(listing.attempts),
+            "attempts": [_quiz_attempt_to_json(attempt) for attempt in listing.attempts],
+        }
+    }
+
+
+def _warn_quiz_listing(listing: QuizListing) -> None:
+    if listing.has_more:
+        typer.echo(
+            "warning: the provider reported more quizzes than were returned; further pages "
+            "are not followed, so this list is incomplete.",
+            err=True,
+        )
+    if not listing.quizzes:
+        typer.echo(
+            "warning: no quizzes were returned. Brightspace lists only quizzes your role may "
+            "view, so this does not prove the course has none.",
+            err=True,
+        )
+
+
+@quizzes_app.command("list")
+def quizzes_list(
+    course_id: str = typer.Option(
+        ..., "--course", help="Brightspace course (org-unit) id -- see 'd2l courses list'."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit machine-readable JSON only (to stdout)."
+    ),
+) -> None:
+    """List the quizzes Brightspace shows you for one course (metadata only).
+
+    Dates are UTC; ``null`` means the provider did not report a value. Quiz questions, answers
+    and feedback are never requested. An empty list is not proof that a course has no quizzes.
+    """
+    config = _load_cli_config()
+    auth = _build_auth_service(config)
+    try:
+        headers = auth.header_provider()
+    except D2LError as exc:
+        _fail(json_output=json_output, message=str(exc))
+    try:
+        listing = _build_quiz_service(config, headers).list_quizzes(course_id)
+    except ValueError as exc:
+        _fail(json_output=json_output, message=str(exc))
+    except D2LError as exc:
+        _fail(json_output=json_output, message=str(exc))
+
+    _warn_quiz_listing(listing)
+    if json_output:
+        payload = {
+            "quizzes": {
+                "course_id": course_id,
+                "complete": listing.complete,
+                "quizzes": [_quiz_to_json(quiz) for quiz in listing.quizzes],
+            }
+        }
+        typer.echo(json.dumps(payload))
+        return
+    for quiz in listing.quizzes:
+        due = quiz.due_date or "-"
+        if quiz.attempts_unlimited:
+            attempts = "unlimited"
+        else:
+            attempts = "-" if quiz.attempts_allowed is None else str(quiz.attempts_allowed)
+        limit = "-" if quiz.time_limit_minutes is None else f"{quiz.time_limit_minutes}m"
+        typer.echo(
+            f"{quiz.quiz_id}\t{_terminal_text(quiz.name)}\tdue {due}"
+            f"\tattempts {attempts}\tlimit {limit}"
+        )
+
+
+@quizzes_app.command("attempts")
+def quizzes_attempts(
+    course_id: str = typer.Option(
+        ..., "--course", help="Brightspace course (org-unit) id -- see 'd2l courses list'."
+    ),
+    quiz_id: str = typer.Option(..., "--quiz", help="Quiz id from 'd2l quizzes list'."),
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit machine-readable JSON only (to stdout)."
+    ),
+) -> None:
+    """Show your own attempt summaries for one quiz (experimental).
+
+    Your identity is verified first (``whoami``); attempts are then requested for that user id
+    only, and every returned record must carry it, or nothing is shown and the command fails. No
+    fallback to an unfiltered request exists. ``feedback_published`` is the provider's flag that
+    feedback is visible to you; the numeric score is never shown because its release rule is
+    undocumented. No feedback, questions or answers are requested. "No attempts returned" does not
+    prove the quiz was never attempted.
+    """
+    config = _load_cli_config()
+    auth = _build_auth_service(config)
+    try:
+        headers = auth.header_provider()
+    except D2LError as exc:
+        _fail(json_output=json_output, message=str(exc))
+    try:
+        listing = _build_quiz_service(config, headers).list_attempts(course_id, quiz_id)
+    except ValueError as exc:
+        _fail(json_output=json_output, message=str(exc))
+    except D2LError as exc:
+        _fail(json_output=json_output, message=str(exc))
+
+    if listing.has_more:
+        typer.echo(
+            "warning: the provider reported more attempts than were returned; further pages "
+            "are not followed, so this list is incomplete.",
+            err=True,
+        )
+    if not listing.attempts:
+        typer.echo(
+            "warning: no attempts were returned. That does not prove the quiz was not attempted; "
+            "the provider may withhold attempts from your role.",
+            err=True,
+        )
+    if json_output:
+        typer.echo(json.dumps(_quiz_attempts_to_json(listing)))
+        return
+    for attempt in listing.attempts:
+        number = "-" if attempt.attempt_number is None else str(attempt.attempt_number)
+        feedback = {True: "yes", False: "no", None: "unknown"}[attempt.feedback_published]
+        typer.echo(
+            f"attempt {number}\t{attempt.status.value}\tstarted {attempt.started or '-'}"
+            f"\tcompleted {attempt.completed or '-'}\tfeedback published {feedback}"
+            "\tscore not shown"
+        )
+
+
+def _forum_to_json(forum: DiscussionForum) -> dict[str, Any]:
+    return {
+        "forum_id": forum.forum_id,
+        "course_id": forum.course_id,
+        "name": forum.name,
+        "description": forum.description,
+    }
+
+
+def _topic_to_json(topic: DiscussionTopic) -> dict[str, Any]:
+    return {
+        "topic_id": topic.topic_id,
+        "forum_id": topic.forum_id,
+        "course_id": topic.course_id,
+        "name": topic.name,
+        "description": topic.description,
+    }
+
+
+def _post_to_json(post: DiscussionPost, *, present: frozenset[str]) -> dict[str, Any]:
+    return {
+        "post_id": post.post_id,
+        "course_id": post.course_id,
+        "forum_id": post.forum_id,
+        "topic_id": post.topic_id,
+        "thread_id": post.thread_id,
+        "parent_post_id": post.parent_post_id,
+        # Whether the parent is among the posts returned; null for a thread's first post.
+        "parent_in_results": (
+            None if post.parent_post_id is None else post.parent_post_id in present
+        ),
+        "author": post.author,
+        "anonymous": post.anonymous,
+        "subject": post.subject,
+        "body": post.body,
+        "body_truncated": post.body_truncated,
+        "posted": post.posted,
+        "edited": post.edited,
+        "deleted": post.deleted,
+        "requires_approval": post.requires_approval,
+        "reply_count": post.reply_count,
+    }
+
+
+def _discussion_posts_to_json(result: DiscussionPosts) -> dict[str, Any]:
+    present = frozenset(post.post_id for post in result.posts)
+    return {
+        "discussion_posts": {
+            "course_id": result.course_id,
+            "forum_id": result.forum_id,
+            "topic_id": result.topic_id,
+            "thread_id": result.thread_id,
+            "complete": result.complete,
+            "completeness_basis": result.completeness_basis,
+            "page_size": result.page_size,
+            "pages_fetched": result.pages_fetched,
+            "posts": [_post_to_json(post, present=present) for post in result.posts],
+        }
+    }
+
+
+def _warn_discussion_incomplete(what: str, complete: bool) -> None:
+    if not complete:
+        typer.echo(
+            f"warning: more {what} exist than were read; this result is incomplete.",
+            err=True,
+        )
+
+
+def _discussion_call(json_output: bool, config: Config, call: Any) -> Any:
+    auth = _build_auth_service(config)
+    try:
+        headers = auth.header_provider()
+    except D2LError as exc:
+        _fail(json_output=json_output, message=str(exc))
+    try:
+        return call(_build_discussion_service(config, headers))
+    except ValueError as exc:
+        _fail(json_output=json_output, message=str(exc))
+    except D2LError as exc:
+        _fail(json_output=json_output, message=str(exc))
+
+
+@discussions_app.command("forums")
+def discussions_forums(
+    course_id: str = typer.Option(
+        ..., "--course", help="Brightspace course (org-unit) id -- see 'd2l courses list'."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit machine-readable JSON only (to stdout)."
+    ),
+) -> None:
+    """List the discussion forums Brightspace shows you for one course."""
+    config = _load_cli_config()
+    listing = _discussion_call(json_output, config, lambda s: s.list_forums(course_id))
+    _warn_discussion_incomplete("forums", listing.complete)
+    if json_output:
+        typer.echo(
+            json.dumps(
+                {
+                    "discussion_forums": {
+                        "course_id": course_id,
+                        "complete": listing.complete,
+                        "forums": [_forum_to_json(f) for f in listing.forums],
+                    }
+                }
+            )
+        )
+        return
+    for forum in listing.forums:
+        typer.echo(f"{forum.forum_id}\t{_terminal_text(forum.name)}")
+
+
+@discussions_app.command("topics")
+def discussions_topics(
+    course_id: str = typer.Option(
+        ..., "--course", help="Brightspace course (org-unit) id -- see 'd2l courses list'."
+    ),
+    forum_id: str = typer.Option(..., "--forum", help="Forum id from 'd2l discussions forums'."),
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit machine-readable JSON only (to stdout)."
+    ),
+) -> None:
+    """List the topics of one forum."""
+    config = _load_cli_config()
+    listing = _discussion_call(json_output, config, lambda s: s.list_topics(course_id, forum_id))
+    _warn_discussion_incomplete("topics", listing.complete)
+    if json_output:
+        typer.echo(
+            json.dumps(
+                {
+                    "discussion_topics": {
+                        "course_id": course_id,
+                        "forum_id": forum_id,
+                        "complete": listing.complete,
+                        "topics": [_topic_to_json(t) for t in listing.topics],
+                    }
+                }
+            )
+        )
+        return
+    for topic in listing.topics:
+        typer.echo(f"{topic.topic_id}\t{_terminal_text(topic.name)}")
+
+
+@discussions_app.command("posts")
+def discussions_posts(
+    course_id: str = typer.Option(
+        ..., "--course", help="Brightspace course (org-unit) id -- see 'd2l courses list'."
+    ),
+    forum_id: str = typer.Option(..., "--forum", help="Forum id from 'd2l discussions forums'."),
+    topic_id: str = typer.Option(..., "--topic", help="Topic id from 'd2l discussions topics'."),
+    thread_id: str | None = typer.Option(
+        None, "--thread", help="Only the posts of this thread (a numeric thread id)."
+    ),
+    acknowledge_read_state_risk: bool = typer.Option(
+        False,
+        "--acknowledge-read-state-risk",
+        help="Acknowledge that retrieving posts may change server-side read state.",
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit machine-readable JSON only (to stdout)."
+    ),
+) -> None:
+    """Experimental: read posts; server-side read-state effects are unverified.
+
+    Author names are shown only when the post is not anonymous; deleted posts keep their place
+    but have no text. The command never posts, rates or deliberately changes read status,
+    but the provider may mark posts read on retrieval. Do not recommend live use until that
+    side effect is resolved. The provider documents
+    no total or end-of-data signal, so a result is complete only after an empty page is observed;
+    any other stop is marked incomplete with its reason.
+    """
+    if not acknowledge_read_state_risk:
+        _fail(
+            json_output=json_output,
+            message="discussion posts require --acknowledge-read-state-risk; "
+            "retrieving posts may change server-side read state",
+        )
+    typer.echo(
+        "warning: discussion post retrieval may change server-side read state; "
+        "this effect remains unverified.",
+        err=True,
+    )
+    config = _load_cli_config()
+    result = _discussion_call(
+        json_output, config, lambda s: s.list_posts(course_id, forum_id, topic_id, thread_id)
+    )
+    if not result.complete:
+        typer.echo(
+            "warning: the end of this discussion was not confirmed "
+            f"({result.completeness_basis}; read {result.pages_fetched} page(s) of up to "
+            f"{result.page_size}); more posts may exist, so this result is incomplete.",
+            err=True,
+        )
+    if json_output:
+        typer.echo(json.dumps(_discussion_posts_to_json(result)))
+        return
+    if not result.posts:
+        typer.echo("No posts were returned.")
+        return
+    for post in result.posts:
+        reply = f" (reply to {post.parent_post_id})" if post.parent_post_id else ""
+        who = "anonymous" if post.anonymous else (post.author or "unknown author")
+        typer.echo(f"post {post.post_id}{reply}\t{_terminal_text(who)}\t{post.posted or '-'}")
+        if post.deleted:
+            typer.echo("   (deleted)")
+            continue
+        if post.subject:
+            typer.echo(f"   {_terminal_text(post.subject)}")
+        for line in (post.body or "").split("\n"):
+            typer.echo(f"   {line}" if line else "")
+        if post.body_truncated:
+            typer.echo("   [text truncated]")
+
+
+@courses_app.command("resolve")
+def courses_resolve(
+    query: str = typer.Argument(..., help="Course id, code, name, or unambiguous partial name."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON only."),
+) -> None:
+    """Resolve one active, accessible course without making a course-specific request."""
+    config = _load_cli_config()
+    try:
+        headers = _build_auth_service(config).header_provider()
+        course = CourseResolver(_build_course_service(config, headers)).resolve(query)
+    except AmbiguousCourseError as exc:
+        details = ", ".join(
+            f"{_terminal_text(c.id)} {_terminal_text(c.code)} ({_terminal_text(c.semester_name)})"
+            for c in exc.matches[:10]
+        )
+        _fail(json_output=json_output, message=f"course query is ambiguous: {details}")
+    except (D2LError, CourseResolutionError) as exc:
+        _fail(json_output=json_output, message=str(exc))
+    if json_output:
+        typer.echo(json.dumps({"course": _course_to_json(course)}))
+    else:
+        typer.echo(f"{_terminal_text(course.id)}\t{_terminal_text(course.code)}\t{_terminal_text(course.name)}")
+
+
+def _content_node_to_json(node: ContentNode) -> dict[str, Any]:
+    return {
+        "id": node.id,
+        "title": node.title,
+        "parent_module_id": node.parent_module_id,
+        "kind": node.kind,
+        "children": [_content_node_to_json(child) for child in node.children],
+    }
+
+
+@content_app.command("tree")
+@content_app.command("toc")
+def content_tree(
+    course_id: str = typer.Option(..., "--course", help="Numeric Brightspace course id."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON only."),
+) -> None:
+    """Show visible course modules and topics; never retrieve topic files."""
+    config = _load_cli_config()
+    try:
+        headers = _build_auth_service(config).header_provider()
+        tree = _build_content_service(config, headers).tree(course_id)
+    except (D2LError, ValueError) as exc:
+        _fail(json_output=json_output, message=str(exc))
+    if json_output:
+        typer.echo(json.dumps({"content_tree": {
+            "course_id": tree.course_id,
+            "completeness": tree.completeness,
+            "node_count": tree.node_count,
+            "modules": [_content_node_to_json(node) for node in tree.modules],
+        }}))
+        return
+    if not tree.modules:
+        typer.echo("warning: content completeness is unknown", err=True)
+        typer.echo("No visible content was returned; completeness is unknown.")
+        return
+    def show(node: ContentNode, depth: int) -> None:
+        typer.echo(f"{'  ' * depth}{_terminal_text(node.title)} [{node.kind} {node.id}]")
+        for child in node.children:
+            show(child, depth + 1)
+    for node in tree.modules:
+        show(node, 0)
+    typer.echo("warning: content completeness is unknown", err=True)
 
 
 def main() -> None:

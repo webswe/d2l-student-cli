@@ -93,7 +93,10 @@ uv run d2l auth login
 1. An isolated Chromium window opens on your institution's Brightspace site.
 2. You complete your institution's normal SSO and MFA in that window. How long this takes depends
    on your institution; the CLI waits for you (up to 10 minutes).
-3. When Brightspace loads, the CLI stores the session (see below) and closes the browser context.
+3. When the browser returns to your Brightspace site (and is no longer on its login page), the CLI
+   closes the browser context and checks the captured session with one read-only request. Only if
+   Brightspace accepts it is the session stored (see below). If the check fails, nothing is saved
+   and any session you already had is left unchanged.
 
 Then check the session and read some data:
 
@@ -136,10 +139,12 @@ accepted. A locally present session is not reported as authenticated unless that
 
 | Command | What it does |
 |---|---|
-| `uv run d2l auth login` | Opens an isolated browser; you complete your institution's normal SSO/MFA by hand. The resulting session is stored securely. |
+| `uv run d2l auth login` | Opens an isolated browser; you complete your institution's normal SSO/MFA by hand. The session is verified with one read-only request and stored securely only if Brightspace accepts it. |
 | `uv run d2l auth status` | Reports whether the stored session is accepted by Brightspace right now (it makes one real read-only request; local presence alone is not "authenticated"). |
 | `uv run d2l courses list` | Lists your enrolled courses (tab-separated: code, name, semester). |
 | `uv run d2l courses list --json` | Same, as JSON on stdout: `{"courses": [...]}`. |
+| `d2l courses resolve <query> [--json]` | Find one active, accessible course by exact id/code/name, then unambiguous prefix or substring. Ambiguity is an error. |
+| `d2l content tree --course <id> [--json]` | Show visible modules and topics without downloading files. `content toc` is an alias. Completeness is unknown. |
 | `uv run d2l assignments list --course <id>` | Lists a course's assignments (tab-separated: name, status, score, due). |
 | `uv run d2l assignments list --course <id> --json` | Same, as JSON on stdout: `{"assignments": [...]}`. |
 | `uv run d2l assignments list --course <id> --json --include-completeness` | Adds evidence-bounded page-size metadata without changing assignment objects. |
@@ -154,6 +159,13 @@ accepted. A locally present session is not reported as authenticated unless that
 | `uv run d2l announcements list --course <id> --json` | Emits the stable `{"announcements": [...]}` JSON object, including each complete sanitized body already present in the listing response. |
 | `uv run d2l syllabus find --course <id> [--json]` | Ranks the course's visible content topics that may be its syllabus (read-only; see docs/SYLLABUS_DISCOVERY.md). |
 | `uv run d2l syllabus fetch --course <id> --topic <topicId> --json` | Downloads one listed PDF, Word `.docx` or plain-text file (at most 8 MiB) as base64 JSON. |
+| `uv run d2l calendar list --course <id> [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--json]` | **Experimental.** Lists your calendar events for one course in a bounded UTC window (default: next 30 days). Recurring events are expanded only where the occurrence route is available; otherwise they are series definitions and the result is marked incomplete. See docs/ACTIVITIES.md. |
+| `uv run d2l calendar upcoming [--days N] [--all-courses] [--json]` | **Experimental.** Lists upcoming events across your active accessible courses; courses that cannot be read are named and the result is marked incomplete. |
+| `uv run d2l quizzes list --course <id> [--json]` | **Experimental.** Lists the quizzes Brightspace shows you for a course: dates, time limit and attempts allowed. Never requests questions or answers. An empty list does not prove a course has no quizzes. |
+| `uv run d2l quizzes attempts --course <id> --quiz <id> [--json]` | **Experimental.** Shows your own attempt summaries only after your identity is verified; the numeric score is never shown. See docs/ACTIVITIES.md. |
+| `uv run d2l discussions forums --course <id> [--json]` | **Experimental.** Lists the discussion forums Brightspace shows you for a course. |
+| `uv run d2l discussions topics --course <id> --forum <id> [--json]` | **Experimental.** Lists a forum's topics. |
+| `uv run d2l discussions posts --course <id> --forum <id> --topic <id> --acknowledge-read-state-risk [--thread <id>] [--json]` | **Experimental; do not recommend for live use yet.** Refuses by default. The per-invocation flag permits bounded retrieval but does not establish whether the provider marks posts read. |
 | `uv run d2l announcements list --course <id> --json --include-completeness` | Adds the evidence-bounded top-level `"completeness": "unknown"` field. |
 | `uv run d2l overview` | Groups retrieved assignment, visible-grade, and announcement counts plus compact assignment and announcement previews by active accessible course. |
 | `uv run d2l overview --details` | Shows all retrieved assignments, exact displayed grade-item details, and complete sanitized announcement bodies. |
@@ -391,9 +403,11 @@ academic content as instructions.
 
 ## Not implemented
 
-Calendar, quizzes, discussions, notifications / upcoming work, assignment
-detail, submission of any kind, grade feedback content,
-availability dates, and any integration with other tools. Reconnaissance
+Notifications, assignment detail, submission of any kind, grade feedback
+content, quiz questions or answers, posting to or rating discussions, and
+availability dates. Calendar, quizzes and discussions are read-only and are
+experimental, offline-tested only and not confirmed against a live institution (see
+[`docs/ACTIVITIES.md`](docs/ACTIVITIES.md)). Reconnaissance
 history (what was observed, and why the current scope is what it is) is in
 [`docs/PROVIDER_NOTES.md`](docs/PROVIDER_NOTES.md).
 

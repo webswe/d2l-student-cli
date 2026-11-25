@@ -110,6 +110,16 @@ AUTHENTICATED_COMMANDS = [
     ("overview", "--json"),
     ("syllabus", "find", "--course", "1001", "--json"),
     ("syllabus", "fetch", "--course", "1001", "--topic", "2002", "--json"),
+    ("calendar", "list", "--course", "1001", "--json"),
+    ("calendar", "upcoming", "--json"),
+    ("quizzes", "list", "--course", "1001", "--json"),
+    ("quizzes", "attempts", "--course", "1001", "--quiz", "3003", "--json"),
+    ("discussions", "forums", "--course", "1001", "--json"),
+    ("discussions", "topics", "--course", "1001", "--forum", "4004", "--json"),
+    (
+        "discussions", "posts", "--course", "1001", "--forum", "4004", "--topic", "5005",
+        "--acknowledge-read-state-risk", "--json",
+    ),
 ]
 
 

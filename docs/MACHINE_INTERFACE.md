@@ -147,6 +147,31 @@ withheld. Body availability and list completeness are separate facts.
 
 ## Command envelopes
 
+### Course resolution and content hierarchy (new; execution validation pending)
+
+`d2l courses resolve <query> --json` returns `{"course": COURSE}`. It makes one
+course-list GET. Exact numeric ID precedes normalized exact code and name,
+then unambiguous prefix and substring. Only active accessible courses qualify.
+Ambiguity or absence exits 1 with empty stdout; existing numeric `--course`
+options are unchanged.
+
+`d2l content tree --course <id> --json` (alias `content toc`) returns
+`{"content_tree": {"course_id": string, "completeness": "unknown",
+"node_count": integer, "modules": [NODE, ...]}}`. Every node has `id`,
+`title`, `parent_module_id` (string or null), `kind`, and `children` (array).
+Module `kind` is `module`; a topic's kind is its sanitized provider type.
+Top-level modules have a null parent. Topic and nested-module children retain
+their structural parent and order within the provider's separate Topics and
+Modules arrays; topics appear before nested modules. Hidden and broken content
+is omitted. An empty array means no visible modules were returned, with
+completeness still unknown. Titles and kinds are plain text, not trusted
+instructions. One versions GET and one TOC GET are made per invocation; there
+is no file GET. The content route and browser-session compatibility have not
+been live validated. Parsing bounds depth to 10 and visible nodes to 10,000;
+the 10,000-node traversal bound also counts hidden entries. Duplicate IDs,
+cycles, missing child arrays, mismatched course associations, unsupported
+top-level topics and malformed structures fail closed.
+
 ### Course listing
 
 `d2l courses list --json` returns:
@@ -276,6 +301,81 @@ partition `assignments`. Course order and each nested provider order are
 preserved. Filtering matches the assignment overview. Any read or association
 failure aborts the entire command: the interface never returns a silently
 partial unified overview.
+
+### Calendar, quiz and discussion commands (experimental)
+
+These commands are **experimental**: offline-tested only and not confirmed against any live
+institution. Their JSON may change before a stable release. Details, limits and the route
+compatibility matrix are in [ACTIVITIES.md](ACTIVITIES.md). In every case a hard failure exits
+with status 1 and empty stdout; completeness is explicit and never implied.
+
+#### Calendar events
+
+`d2l calendar list --course <id> --json` and `d2l calendar upcoming --json` print
+`{"calendar": {...}}`.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `course_id` | string | Present for `list` only. |
+| `window` | object | `start` and `end`, UTC `YYYY-MM-DDTHH:MM:SSZ`; half-open `[start, end)`. |
+| `complete` | boolean | `false` when a course failed, more pages exist, or a recurring event is only a definition. Never ignore it. |
+| `incomplete_reasons` | array of string | Any of `course_failed`, `more_pages`, `recurring_not_expanded`. |
+| `recurrence` | object | `mode` (`occurrences`, `definitions_only`, `mixed`), `unexpanded_recurring_events` (integer), `occurrence_route_fallback_courses` (array). |
+| `courses_requested` | integer | Courses queried. |
+| `courses_failed` | array | `{course_id, reason}`; `reason` is `permission_denied`, `rate_limited`, `network_unavailable`, `unsupported_response`, `provider_error` or `error`. |
+| `truncated_courses` | array of string | Courses where the provider reported more pages than were returned. |
+| `duplicates_dropped` | integer | Same `(event id, occurrence id)` counted once across courses. |
+| `events` | array | Event records ordered by start. |
+
+Event record (every key present; `null` when unknown): `event_id`, `course_id`, `course_name`,
+`course_code`, `title`, `description`, `all_day`, `start_utc` and `end_utc` (timed events;
+`end_utc` may be `null`), `start_day` and `end_day` (all-day, `YYYY-MM-DD`, end exclusive),
+`recurring`, `occurrence_id` (set for an expanded occurrence), `occurrences_expanded`,
+`event_type`, `associated_entity` (`{type, id}` or `null`), `view_reference` (a relative path,
+never fetched). A recurring event with `occurrences_expanded: false` describes the series only.
+
+#### Quizzes
+
+`d2l quizzes list --course <id> --json` prints `{"quizzes": {"course_id", "complete",
+"quizzes": [...]}}`; `d2l quizzes attempts --course <id> --quiz <id> --json` prints
+`{"quiz_attempts": {"course_id", "quiz_id", "complete", "attempts_returned", "attempts": [...]}}`.
+
+Quiz record: `quiz_id`, `course_id`, `name`, `description`, `active`, `start_date`, `end_date`,
+`due_date` (UTC), `time_limit_minutes`, `time_limit_enforced`, `attempts_allowed`,
+`attempts_unlimited` (`null` = not reported).
+
+Attempt record: `attempt_id`, `quiz_id`, `attempt_number`, `started`, `completed` (UTC), `status`
+(`completed`, `in_progress`, `unknown`), `attempt_completed` (boolean), `feedback_published`
+(`true`, `false` or `null` = unknown), `score_released` and `score` (**always `null`**: the
+numeric score's release rule is undocumented, so it is never shown). Attempts are shown only
+after the signed-in user's identity is verified (`whoami`) and every record is proven to belong to
+that user and quiz; otherwise the command fails with no data. An empty `attempts` array does not
+mean the quiz was not attempted. No question, answer, feedback or user-identifier field exists.
+
+#### Discussions
+
+`posts` requires `--acknowledge-read-state-risk` on every invocation. Without it, the command
+exits 1 with empty stdout before configuration, credentials or network access. With it, a warning
+about unverified server-side read-state effects goes to stderr, including in `--json` mode. The
+flag does not establish that retrieval is safe.
+
+`d2l discussions forums|topics|posts ... --json` print `{"discussion_forums": {...}}`,
+`{"discussion_topics": {...}}` and `{"discussion_posts": {...}}`, each with `course_id`, a boolean
+`complete` and its array. `posts` also carries `forum_id`, `topic_id`, `thread_id` (or `null`),
+`completeness_basis` (`empty_page_observed` is the only complete value; others are
+`page_cap_reached`, `size_cap_reached`, `end_not_confirmed`), `page_size` and `pages_fetched`.
+`topics` also has `forum_id`.
+
+- Forum: `forum_id`, `course_id`, `name`, `description`.
+- Topic: `topic_id`, `forum_id`, `course_id`, `name`, `description`.
+- Post: `post_id`, `course_id`, `forum_id`, `topic_id`, `thread_id`, `parent_post_id`,
+  `parent_in_results` (`null` for a first post, else whether the parent was returned), `author`
+  (display name; `null` when anonymous or deleted), `anonymous`, `subject`, `body` (sanitized
+  text; `null` when deleted), `body_truncated`, `posted`, `edited` (UTC), `deleted`,
+  `requires_approval`, `reply_count` (`null` when the provider sent no reply list).
+
+No user identifier, read status, rating or vote field exists. A result that is not complete exits
+0 with `complete: false` and a warning on stderr; a hard failure exits 1.
 
 ## Safe subprocess integration
 

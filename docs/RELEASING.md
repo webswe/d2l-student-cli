@@ -93,7 +93,8 @@ Recommendations (do not block): additional platforms, extra badges, further refa
 
 - **GitHub source**: public visibility, license and protections are owner decisions.
 - **GitHub Releases**: only artifacts built and inspected per the checklist above.
-- **PyPI**: not published. Before the first upload, check name availability for `d2l-cli`, confirm the
+- **PyPI**: this project is not published. The current distribution name `d2l-cli` conflicts with
+  another published distribution; choose and verify a distinct name before any upload. Confirm the
   MIT license metadata, and prefer Trusted Publishing (OIDC) from a workflow that runs only on a manually
   approved release in a protected `pypi` environment, never on an ordinary push or tag. Validate
   on TestPyPI first as its own approved step. No publishing workflow exists in this repository.

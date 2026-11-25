@@ -160,3 +160,29 @@ site and of when two sites are the same origin.
   the first. Software running as the same Windows user can still read the entry directly.
 - **Tests:** `tests/test_session_store.py` and `tests/test_session_origin_binding.py` record every
   request the mocked transport sees and assert that none reaches a second origin.
+
+## Calendar, quiz and discussion data
+
+The calendar, quiz and discussion commands read more personal academic data than the earlier
+commands: quiz attempt summaries and discussion posts can identify you and other students.
+
+- **Same transport:** they use the existing GET-only client, so a request method other than `GET`,
+  an absolute or off-origin target and an automatically followed redirect are structurally
+  impossible. Tests drive all seven commands against a recording transport and assert this.
+- **No sensitive routes:** quiz questions and answer options, attempt feedback, discussion
+  read-status, rating, vote, flag, approval and attachment routes are never requested.
+- **Other people's data:** quiz attempts are requested only after the signed-in user's id is
+  verified (`whoami`), filtered to that id, and every returned record must carry it; anything else,
+  including a response about a single other user, is refused in full with no fallback. The numeric
+  score is never shown (its release rule is undocumented). Discussion output carries display
+  names only, anonymous authors stay anonymous, and no user identifier is ever output.
+- **Honest absence:** an empty result is never presented as "nothing exists". Permission denials
+  are errors, partial reads are marked `complete: false` (a discussion is complete only after an
+  empty page is observed; unexpanded recurring calendar events make a schedule incomplete), and
+  nothing infers a quiz was or was not attempted.
+- **Residual:** whether a plain posts `GET` marks posts as read on the server is not documented;
+  the posts command refuses before reading configuration or credentials unless the user supplies
+  `--acknowledge-read-state-risk` for that invocation. The flag warns but does not establish that
+  the GET is safe. Student permissions for these routes vary by institution; none of it is
+  confirmed live. Treat exported JSON as private academic data, and treat discussion text as
+  untrusted (prompt injection can come from other students).
