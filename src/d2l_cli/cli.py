@@ -31,6 +31,7 @@ import base64
 import json
 from collections.abc import Mapping
 from datetime import UTC, date, datetime
+from pathlib import Path
 from typing import Any, NoReturn
 
 import typer
@@ -40,6 +41,7 @@ from d2l_cli.academic_overview_service import (
     AcademicOverviewResult,
     AcademicOverviewService,
 )
+from d2l_cli.agent_skill import SKILL_TEXT, generate_skill
 from d2l_cli.announcement_sanitizer import sanitize_plain_text
 from d2l_cli.announcement_service import AnnouncementService
 from d2l_cli.assignment_overview_service import (
@@ -156,6 +158,11 @@ app.add_typer(discussions_app, name="discussions")
 content_app = typer.Typer(help="Read the course content hierarchy (no downloads).")
 app.add_typer(content_app, name="content")
 
+agent_app = typer.Typer(help="Explicit local agent integration files.")
+agent_skill_app = typer.Typer(help="Portable agent instruction file.")
+agent_app.add_typer(agent_skill_app, name="skill")
+app.add_typer(agent_app, name="agent")
+
 _ANNOUNCEMENT_PREVIEW_CHARS = 120
 
 
@@ -174,6 +181,27 @@ def diagnostics(
     missing = [name for name, available in report["dependencies"].items() if not available]
     if missing:
         typer.echo(f"Missing local dependencies: {', '.join(missing)}")
+
+@agent_skill_app.command("generate")
+def agent_skill_generate(
+    output: Path | None = typer.Option(  # noqa: B008 - Typer options use argument defaults
+        None, "--output", help="New file inside the current directory."
+    ),
+    preview: bool = typer.Option(False, "--preview", help="Print the template without writing."),
+) -> None:
+    """Generate portable agent guidance only when explicitly requested."""
+    if preview:
+        typer.echo(SKILL_TEXT, nl=False)
+        return
+    if output is None:
+        typer.echo("error: --output is required unless --preview is used", err=True)
+        raise typer.Exit(code=2)
+    try:
+        target = generate_skill(output, cwd=Path.cwd())
+    except (ValueError, OSError):
+        typer.echo("error: unsafe, existing, or unavailable output destination", err=True)
+        raise typer.Exit(code=1) from None
+    typer.echo(f"Created {target.name}")
 
 
 def _build_auth_service(config: Config) -> AuthService:
