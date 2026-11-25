@@ -9,7 +9,8 @@
 
 > **Discussion posts require additional review before live use.** The published posts GET
 > contract does not establish whether retrieval marks posts read on the server. GET alone is
-> insufficient evidence that a student-visible read state remains unchanged.
+> insufficient evidence that a student-visible read state remains unchanged. The posts command
+> refuses by default; its per-invocation acknowledgment flag does not prove retrieval is safe.
 
 ## What all three share
 
@@ -118,7 +119,7 @@ d2l quizzes attempts --course <id> --quiz <id> [--json]
 ```text
 d2l discussions forums --course <id> [--json]
 d2l discussions topics --course <id> --forum <id> [--json]
-d2l discussions posts --course <id> --forum <id> --topic <id> [--thread <id>] [--json]
+d2l discussions posts --course <id> --forum <id> --topic <id> --acknowledge-read-state-risk [--thread <id>] [--json]
 ```
 
 - **Pagination:** the posts route documents `pageSize` (max 1000), `pageNumber`, `sort` and
@@ -142,6 +143,9 @@ d2l discussions posts --course <id> --forum <id> --topic <id> [--thread <id>] [-
   own list and is `null` when none was sent.
 - **Text:** sanitized plain text, cut at 20,000 characters with `body_truncated: true`.
 - **Read status:** no read-status, rating, vote, flag, approval or attachment route is requested.
-  Whether a plain posts `GET` marks posts read server-side is not documented and is unverified.
+  Without `--acknowledge-read-state-risk`, the posts command exits before configuration or
+  credentials are read and makes no request. With the flag it warns on stderr before retrieval.
+  The flag is required on every invocation and is not stored. Whether a plain posts `GET` marks
+  posts read server-side is not documented and is unverified; the flag does not resolve this risk.
 - **Unverified:** everything in the matrix, anonymity and deletion fields on a real tenant, and
   what the provider returns for a page past the end (documented nowhere).

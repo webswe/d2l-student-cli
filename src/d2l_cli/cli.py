@@ -1603,6 +1603,11 @@ def discussions_posts(
     thread_id: str | None = typer.Option(
         None, "--thread", help="Only the posts of this thread (a numeric thread id)."
     ),
+    acknowledge_read_state_risk: bool = typer.Option(
+        False,
+        "--acknowledge-read-state-risk",
+        help="Acknowledge that retrieving posts may change server-side read state.",
+    ),
     json_output: bool = typer.Option(
         False, "--json", help="Emit machine-readable JSON only (to stdout)."
     ),
@@ -1616,6 +1621,17 @@ def discussions_posts(
     no total or end-of-data signal, so a result is complete only after an empty page is observed;
     any other stop is marked incomplete with its reason.
     """
+    if not acknowledge_read_state_risk:
+        _fail(
+            json_output=json_output,
+            message="discussion posts require --acknowledge-read-state-risk; "
+            "retrieving posts may change server-side read state",
+        )
+    typer.echo(
+        "warning: discussion post retrieval may change server-side read state; "
+        "this effect remains unverified.",
+        err=True,
+    )
     config = _load_cli_config()
     result = _discussion_call(
         json_output, config, lambda s: s.list_posts(course_id, forum_id, topic_id, thread_id)

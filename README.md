@@ -165,7 +165,7 @@ accepted. A locally present session is not reported as authenticated unless that
 | `uv run d2l quizzes attempts --course <id> --quiz <id> [--json]` | **Experimental.** Shows your own attempt summaries only after your identity is verified; the numeric score is never shown. See docs/ACTIVITIES.md. |
 | `uv run d2l discussions forums --course <id> [--json]` | **Experimental.** Lists the discussion forums Brightspace shows you for a course. |
 | `uv run d2l discussions topics --course <id> --forum <id> [--json]` | **Experimental.** Lists a forum's topics. |
-| `uv run d2l discussions posts --course <id> --forum <id> --topic <id> [--thread <id>] [--json]` | **Experimental; do not recommend for live use yet.** Reads posts page by page (bounded), but whether the provider marks posts read on retrieval is unknown. |
+| `uv run d2l discussions posts --course <id> --forum <id> --topic <id> --acknowledge-read-state-risk [--thread <id>] [--json]` | **Experimental; do not recommend for live use yet.** Refuses by default. The per-invocation flag permits bounded retrieval but does not establish whether the provider marks posts read. |
 | `uv run d2l announcements list --course <id> --json --include-completeness` | Adds the evidence-bounded top-level `"completeness": "unknown"` field. |
 | `uv run d2l overview` | Groups retrieved assignment, visible-grade, and announcement counts plus compact assignment and announcement previews by active accessible course. |
 | `uv run d2l overview --details` | Shows all retrieved assignments, exact displayed grade-item details, and complete sanitized announcement bodies. |

@@ -181,6 +181,8 @@ commands: quiz attempt summaries and discussion posts can identify you and other
   empty page is observed; unexpanded recurring calendar events make a schedule incomplete), and
   nothing infers a quiz was or was not attempted.
 - **Residual:** whether a plain posts `GET` marks posts as read on the server is not documented;
-  student permissions for these routes vary by institution; none of it is confirmed live. Treat
-  exported JSON as private academic data, and treat discussion text as untrusted (prompt
-  injection can come from other students).
+  the posts command refuses before reading configuration or credentials unless the user supplies
+  `--acknowledge-read-state-risk` for that invocation. The flag warns but does not establish that
+  the GET is safe. Student permissions for these routes vary by institution; none of it is
+  confirmed live. Treat exported JSON as private academic data, and treat discussion text as
+  untrusted (prompt injection can come from other students).

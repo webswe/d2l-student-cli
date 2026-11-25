@@ -7,9 +7,12 @@ import pytest
 from d2l_cli.auth_service import AuthService, AuthState
 from d2l_cli.browser_auth import BrowserAuthResult, CookieRecord
 from d2l_cli.client.errors import (
+    AuthExpiredError,
     NetworkUnavailableError,
     NotAuthenticatedError,
+    PermissionDeniedError,
     SecureStorageUnavailableError,
+    TLSVerificationError,
     UnexpectedProviderError,
 )
 from d2l_cli.secret import SecretStr
@@ -152,6 +155,43 @@ def test_status_session_expired_when_provider_rejects() -> None:
 
     result = _status_service_with_stored_session(verify).status()
     assert result.state == AuthState.SESSION_EXPIRED
+
+
+@pytest.mark.parametrize(
+    ("error_type", "expected_state"),
+    [
+        (AuthExpiredError, AuthState.SESSION_EXPIRED),
+        (NotAuthenticatedError, AuthState.SESSION_EXPIRED),
+        (PermissionDeniedError, AuthState.SESSION_EXPIRED),
+        (NetworkUnavailableError, AuthState.PROVIDER_UNAVAILABLE),
+        (TLSVerificationError, AuthState.PROVIDER_UNAVAILABLE),
+        (UnexpectedProviderError, AuthState.PROVIDER_UNAVAILABLE),
+    ],
+)
+def test_status_classifies_provider_errors_without_writing_or_leaking_session(
+    error_type: type[Exception], expected_state: AuthState
+) -> None:
+    browser_result = BrowserAuthResult(
+        base_url=BASE_URL, cookies=(_cookie(value="fictional-value"),)
+    )
+    login_service, backend, browser_auth = _service(browser_result=browser_result)
+    login_service.login(BASE_URL)
+    stored_before = backend._data.copy()
+
+    def verify(headers: Mapping[str, str]) -> None:
+        assert headers == {"Cookie": "d2lSessionVal=fictional-value"}
+        raise error_type("synthetic provider error")
+
+    status_service = AuthService(
+        session_store=make_session_store(backend, BASE_URL),
+        browser_auth=browser_auth,
+        verify_session=verify,
+    )
+    result = status_service.status()
+    assert result.state == expected_state
+    assert backend._data == stored_before
+    assert "fictional-value" not in result.detail
+    assert "Cookie" not in result.detail
 
 
 def test_status_provider_unavailable_on_network_error() -> None:

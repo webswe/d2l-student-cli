@@ -116,7 +116,10 @@ AUTHENTICATED_COMMANDS = [
     ("quizzes", "attempts", "--course", "1001", "--quiz", "3003", "--json"),
     ("discussions", "forums", "--course", "1001", "--json"),
     ("discussions", "topics", "--course", "1001", "--forum", "4004", "--json"),
-    ("discussions", "posts", "--course", "1001", "--forum", "4004", "--topic", "5005", "--json"),
+    (
+        "discussions", "posts", "--course", "1001", "--forum", "4004", "--topic", "5005",
+        "--acknowledge-read-state-risk", "--json",
+    ),
 ]
 
 

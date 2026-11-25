@@ -354,6 +354,11 @@ mean the quiz was not attempted. No question, answer, feedback or user-identifie
 
 #### Discussions
 
+`posts` requires `--acknowledge-read-state-risk` on every invocation. Without it, the command
+exits 1 with empty stdout before configuration, credentials or network access. With it, a warning
+about unverified server-side read-state effects goes to stderr, including in `--json` mode. The
+flag does not establish that retrieval is safe.
+
 `d2l discussions forums|topics|posts ... --json` print `{"discussion_forums": {...}}`,
 `{"discussion_topics": {...}}` and `{"discussion_posts": {...}}`, each with `course_id`, a boolean
 `complete` and its array. `posts` also carries `forum_id`, `topic_id`, `thread_id` (or `null`),

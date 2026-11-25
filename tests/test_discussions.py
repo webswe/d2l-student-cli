@@ -546,6 +546,27 @@ def wire(monkeypatch: pytest.MonkeyPatch, provider: _Provider, auth: object | No
     )
 
 
+@pytest.mark.parametrize("json_option", [[], ["--json"]])
+def test_posts_require_opt_in_before_config_credentials_or_requests(
+    monkeypatch: pytest.MonkeyPatch, json_option: list[str]
+) -> None:
+    def forbidden(*args: object, **kwargs: object) -> None:
+        pytest.fail("refused post command accessed configuration, credentials or provider")
+
+    monkeypatch.setattr(cli_module, "_load_cli_config", forbidden)
+    monkeypatch.setattr(cli_module, "_build_auth_service", forbidden)
+    monkeypatch.setattr(cli_module, "_build_discussion_service", forbidden)
+    args = [
+        "discussions", "posts", "--course", COURSE, "--forum", FORUM,
+        "--topic", TOPIC, *json_option,
+    ]
+    for _ in range(2):  # the acknowledgement cannot carry over to another invocation
+        result = runner.invoke(cli_module.app, args)
+        assert result.exit_code == 1 and result.stdout == ""
+        assert "--acknowledge-read-state-risk" in result.stderr
+        assert "read state" in result.stderr
+
+
 def test_forums_and_topics_json_shapes(monkeypatch: pytest.MonkeyPatch) -> None:
     wire(monkeypatch, _Provider())
     forums = runner.invoke(cli_module.app, ["discussions", "forums", "--course", COURSE, "--json"])
@@ -571,10 +592,12 @@ def test_posts_json_shape_privacy_and_parent_presence(monkeypatch: pytest.Monkey
         FORUM,
         "--topic",
         TOPIC,
+        "--acknowledge-read-state-risk",
         "--json",
     ]
     result = runner.invoke(cli_module.app, args)
-    assert result.exit_code == 0 and result.stderr == ""
+    assert result.exit_code == 0
+    assert "read state" in result.stderr and "unverified" in result.stderr
     body = json.loads(result.stdout)["discussion_posts"]
     assert list(body) == [
         "course_id",
@@ -627,6 +650,7 @@ def test_incomplete_posts_warn_on_stderr_and_stay_pure_json_on_stdout(
         FORUM,
         "--topic",
         TOPIC,
+        "--acknowledge-read-state-risk",
         "--json",
     ]
     result = runner.invoke(cli_module.app, args)
@@ -640,7 +664,10 @@ def test_posts_text_output_marks_replies_anonymity_and_deleted_posts(
     wire(monkeypatch, _Provider())
     result = runner.invoke(
         cli_module.app,
-        ["discussions", "posts", "--course", COURSE, "--forum", FORUM, "--topic", TOPIC],
+        [
+            "discussions", "posts", "--course", COURSE, "--forum", FORUM,
+            "--topic", TOPIC, "--acknowledge-read-state-risk",
+        ],
     )
     assert "(reply to 1)" in result.stdout and "anonymous" in result.stdout
     assert "(deleted)" in result.stdout and "text 1" in result.stdout
@@ -651,7 +678,7 @@ def test_errors_exit_one_with_empty_stdout_and_no_secrets(monkeypatch: pytest.Mo
     for args in (
         ["forums"],
         ["topics", "--forum", FORUM],
-        ["posts", "--forum", FORUM, "--topic", TOPIC],
+        ["posts", "--forum", FORUM, "--topic", TOPIC, "--acknowledge-read-state-risk"],
     ):
         result = runner.invoke(cli_module.app, ["discussions", *args, "--course", COURSE, "--json"])
         assert result.exit_code == 1 and result.stdout == ""

@@ -39,7 +39,10 @@ COMMANDS: list[tuple[str, ...]] = [
     ("quizzes", "attempts", "--course", "1001", "--quiz", "3003", "--json"),
     ("discussions", "forums", "--course", "1001", "--json"),
     ("discussions", "topics", "--course", "1001", "--forum", "4004", "--json"),
-    ("discussions", "posts", "--course", "1001", "--forum", "4004", "--topic", "5005", "--json"),
+    (
+        "discussions", "posts", "--course", "1001", "--forum", "4004", "--topic", "5005",
+        "--acknowledge-read-state-risk", "--json",
+    ),
 ]
 FORBIDDEN_SEGMENTS = (
     "/questions",
@@ -194,7 +197,10 @@ BAD_IDS: list[tuple[str, ...]] = [
     ("quizzes", "attempts", "--course", "1001", "--quiz", "1;DROP", "--json"),
     ("discussions", "forums", "--course", "", "--json"),
     ("discussions", "topics", "--course", "1001", "--forum", "%2e%2e", "--json"),
-    ("discussions", "posts", "--course", "1001", "--forum", "4004", "--topic", "5 5", "--json"),
+    (
+        "discussions", "posts", "--course", "1001", "--forum", "4004", "--topic", "5 5",
+        "--acknowledge-read-state-risk", "--json",
+    ),
     (
         "discussions",
         "posts",
@@ -206,6 +212,7 @@ BAD_IDS: list[tuple[str, ...]] = [
         "55",
         "--thread",
         "x",
+        "--acknowledge-read-state-risk",
         "--json",
     ),
 ]

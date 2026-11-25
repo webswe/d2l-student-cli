@@ -130,7 +130,7 @@ class AuthService:
 
         try:
             self._verify_session({"Cookie": material.cookie_header.reveal()})
-        except (NotAuthenticatedError, PermissionDeniedError):
+        except (NotAuthenticatedError, PermissionDeniedError, AuthExpiredError):
             return AuthStatusResult(
                 AuthState.SESSION_EXPIRED, "stored session was rejected by the provider"
             )
