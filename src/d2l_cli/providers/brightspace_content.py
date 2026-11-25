@@ -22,6 +22,7 @@ from typing import Any
 from d2l_cli.announcement_sanitizer import sanitize_plain_text
 from d2l_cli.client.errors import MalformedResponseError, ProviderEndpointChangedError
 from d2l_cli.client.http import D2LHttpClient
+from d2l_cli.models.content import ContentNode, ContentTree
 from d2l_cli.models.syllabus import ContentTopic, TopicKind
 
 _VERSIONS_PATH = "/d2l/api/versions/"
@@ -176,6 +177,109 @@ def parse_toc(payload: object, *, course_id: str) -> tuple[ContentTopic, ...]:
     return tuple(topics)
 
 
+def parse_content_tree(payload: object, *, course_id: str) -> ContentTree:
+    """Keep visible module/topic identity and hierarchy from the established TOC route."""
+    if not _is_numeric_id(course_id):
+        raise ValueError("course_id must be a non-empty numeric Brightspace org-unit id")
+    if not isinstance(payload, dict) or not isinstance(payload.get("Modules"), list):
+        raise _changed("TOC_SHAPE")
+    root_topics = payload.get("Topics", [])
+    if not isinstance(root_topics, list) or root_topics:
+        # This schema has no supported parent for a top-level topic.
+        raise _changed("ROOT_TOPICS")
+    module_ids: set[str] = set()
+    topic_ids: set[str] = set()
+    active_objects: set[int] = set()
+    count = 0
+    visited = 0
+
+    def check_course(node: dict[str, Any]) -> None:
+        owner = node.get("OrgUnitId")
+        if owner is not None and (isinstance(owner, bool) or str(owner) != course_id):
+            raise _changed("COURSE_MISMATCH")
+
+    check_course(payload)
+
+    def numeric_id(node: dict[str, Any], field: str) -> str:
+        value = node.get(field)
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or value < 0
+            or len(str(value)) > 20
+        ):
+            raise _changed("NODE_ID")
+        return str(value)
+
+    def visit_module(raw: object, parent: str | None, depth: int) -> ContentNode | None:
+        nonlocal count, visited
+        if depth > _MAX_DEPTH or not isinstance(raw, dict) or id(raw) in active_objects:
+            raise _changed("MODULE_STRUCTURE")
+        active_objects.add(id(raw))
+        try:
+            visited += 1
+            if visited > _MAX_NODES:
+                raise _changed("NODE_LIMIT")
+            check_course(raw)
+            if _optional_flag(raw, "IsHidden", "MODULE_FLAG"):
+                return None
+            count += 1
+            module_id = numeric_id(raw, "ModuleId")
+            if module_id in module_ids:
+                raise _changed("DUPLICATE_MODULE")
+            module_ids.add(module_id)
+            nested = raw.get("Modules")
+            topics = raw.get("Topics")
+            if not isinstance(nested, list) or not isinstance(topics, list):
+                raise _changed("MODULE_SHAPE")
+            children: list[ContentNode] = []
+            for topic in topics:
+                visited += 1
+                if visited > _MAX_NODES:
+                    raise _changed("NODE_LIMIT")
+                if not isinstance(topic, dict):
+                    raise _changed("TOPIC_SHAPE")
+                check_course(topic)
+                if _optional_flag(topic, "IsHidden", "TOPIC_FLAG") or _optional_flag(
+                    topic, "IsBroken", "TOPIC_FLAG"
+                ):
+                    continue
+                count += 1
+                topic_id = numeric_id(topic, "TopicId")
+                if topic_id in topic_ids:
+                    raise _changed("DUPLICATE_TOPIC")
+                topic_ids.add(topic_id)
+                kind = topic.get("TypeIdentifier")
+                if not isinstance(kind, str):
+                    raise _changed("TOPIC_TYPE")
+                children.append(
+                    ContentNode(
+                        topic_id,
+                        _title(topic.get("Title"), "TOPIC_TITLE"),
+                        module_id,
+                        _title(kind, "TOPIC_TYPE"),
+                    )
+                )
+            for child in nested:
+                item = visit_module(child, module_id, depth + 1)
+                if item is not None:
+                    children.append(item)
+            return ContentNode(
+                module_id,
+                _title(raw.get("Title"), "MODULE_TITLE"),
+                parent,
+                "module",
+                tuple(children),
+            )
+        finally:
+            active_objects.remove(id(raw))
+
+    modules = tuple(
+        node for raw in payload["Modules"] if (node := visit_module(raw, None, 1)) is not None
+    )
+    return ContentTree(course_id, modules, count)
+
+
 class BrightspaceContentProvider:
     """Read the course table of contents and download one listed course file."""
 
@@ -195,6 +299,12 @@ class BrightspaceContentProvider:
         path = f"/d2l/api/le/{self.api_version()}/{course_id}/content/toc"
         response = self._client.get(path)
         return parse_toc(response.json_body, course_id=course_id)
+
+    def list_tree(self, course_id: str) -> ContentTree:
+        if not _is_numeric_id(course_id):
+            raise ValueError("course_id must be a non-empty numeric Brightspace org-unit id")
+        path = f"/d2l/api/le/{self.api_version()}/{course_id}/content/toc"
+        return parse_content_tree(self._client.get(path).json_body, course_id=course_id)
 
     def download_topic_file(self, course_id: str, topic_id: str) -> tuple[bytes, str]:
         """Bytes and declared media type of one file topic (the caller proves it is listed)."""

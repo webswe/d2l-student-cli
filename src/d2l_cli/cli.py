@@ -60,6 +60,7 @@ from d2l_cli.calendar_service import (
 from d2l_cli.client.errors import D2LError, SSOLoginFailedError
 from d2l_cli.client.http import D2LHttpClient
 from d2l_cli.config import Config, load_config
+from d2l_cli.content_service import ContentService
 from d2l_cli.course_service import CourseService
 from d2l_cli.credentials import KeyringCredentialStore
 from d2l_cli.discussion_service import DiscussionService
@@ -71,6 +72,7 @@ from d2l_cli.models.assignment_completeness import (
     AssignmentCompletenessStatus,
 )
 from d2l_cli.models.calendar import CalendarEvent, CalendarListing
+from d2l_cli.models.content import ContentNode
 from d2l_cli.models.course import Course
 from d2l_cli.models.discussion import (
     DiscussionForum,
@@ -147,6 +149,8 @@ quizzes_app = typer.Typer(help="Read quiz metadata and your own attempts (read-o
 app.add_typer(quizzes_app, name="quizzes")
 discussions_app = typer.Typer(help="Read discussion forums, topics and posts (read-only).")
 app.add_typer(discussions_app, name="discussions")
+content_app = typer.Typer(help="Read the course content hierarchy (no downloads).")
+app.add_typer(content_app, name="content")
 
 _ANNOUNCEMENT_PREVIEW_CHARS = 120
 
@@ -192,6 +196,11 @@ def _build_announcement_service(config: Config, headers: Mapping[str, str]) -> A
 def _build_syllabus_service(config: Config, headers: Mapping[str, str]) -> SyllabusService:
     client = D2LHttpClient(config.base_url, auth_header_provider=lambda: headers)
     return SyllabusService(BrightspaceContentProvider(client))
+
+
+def _build_content_service(config: Config, headers: Mapping[str, str]) -> ContentService:
+    client = D2LHttpClient(config.base_url, auth_header_provider=lambda: headers)
+    return ContentService(BrightspaceContentProvider(client))
 
 
 def _build_calendar_service(config: Config, headers: Mapping[str, str]) -> CalendarService:
@@ -1634,6 +1643,50 @@ def discussions_posts(
             typer.echo(f"   {line}" if line else "")
         if post.body_truncated:
             typer.echo("   [text truncated]")
+
+
+def _content_node_to_json(node: ContentNode) -> dict[str, Any]:
+    return {
+        "id": node.id,
+        "title": node.title,
+        "parent_module_id": node.parent_module_id,
+        "kind": node.kind,
+        "children": [_content_node_to_json(child) for child in node.children],
+    }
+
+
+@content_app.command("tree")
+@content_app.command("toc")
+def content_tree(
+    course_id: str = typer.Option(..., "--course", help="Numeric Brightspace course id."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON only."),
+) -> None:
+    """Show visible course modules and topics; never retrieve topic files."""
+    config = _load_cli_config()
+    try:
+        headers = _build_auth_service(config).header_provider()
+        tree = _build_content_service(config, headers).tree(course_id)
+    except (D2LError, ValueError) as exc:
+        _fail(json_output=json_output, message=str(exc))
+    if json_output:
+        typer.echo(json.dumps({"content_tree": {
+            "course_id": tree.course_id,
+            "completeness": tree.completeness,
+            "node_count": tree.node_count,
+            "modules": [_content_node_to_json(node) for node in tree.modules],
+        }}))
+        return
+    if not tree.modules:
+        typer.echo("warning: content completeness is unknown", err=True)
+        typer.echo("No visible content was returned; completeness is unknown.")
+        return
+    def show(node: ContentNode, depth: int) -> None:
+        typer.echo(f"{'  ' * depth}{_terminal_text(node.title)} [{node.kind} {node.id}]")
+        for child in node.children:
+            show(child, depth + 1)
+    for node in tree.modules:
+        show(node, 0)
+    typer.echo("warning: content completeness is unknown", err=True)
 
 
 def main() -> None:
