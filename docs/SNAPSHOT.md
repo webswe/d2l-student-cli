@@ -56,8 +56,8 @@ The record arrays reuse the existing command serializers. Assignment identity
 is `(course_id, id)`; announcements use `(course_id, announcement_id)`. Exact
 duplicates are removed. A conflicting duplicate identity fails that source
 for its course rather than choosing an arbitrary value. Grade items have no
-verified provider item ID; exact duplicate rows are removed, and distinct
-rows are retained without fabricated IDs. Records are sorted deterministically
+verified provider item ID; all returned rows are retained, including identical
+display rows, without fabricated IDs. Records are sorted deterministically
 by identity or displayed fields. Assignment dates retain their naive displayed
 meaning. Grade values remain display strings; no official final grade is
 calculated. Announcement `body` is existing sanitized text. All academic text

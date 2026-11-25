@@ -147,11 +147,11 @@ class SnapshotService:
                             g.course_id != course.id for g in page_g.items
                         ):
                             raise ValueError("invalid grade association")
-                        # Grades have no provider item ID. Retain distinct rows; only exact
-                        # duplicates can safely be removed.
+                        # Grades have no provider item ID. Identical display rows may
+                        # represent distinct items, so retain every provider row.
                         grades = tuple(
                             sorted(
-                                set(page_g.items),
+                                page_g.items,
                                 key=lambda g: (
                                     g.label,
                                     g.displayed_points or "",

@@ -125,6 +125,17 @@ def test_conflicting_duplicate_identity_is_not_silently_chosen() -> None:
     assert result.courses[0].sources["assignments"].error_code == "InvalidNormalizedData"
 
 
+def test_identical_grade_display_rows_are_retained_without_invented_ids() -> None:
+    class DoubleGrades:
+        def get_grade_list(self, cid: str) -> GradeListPage:
+            row = GradeItem(cid, "Quiz", None, None, None, FeedbackAvailability.UNKNOWN)
+            return GradeListPage((row, row), 0, 2, False)
+
+    result = SnapshotService(Courses([course("1")]), Assignments(), DoubleGrades(), Announcements())
+    snapshot = result.get_snapshot(sources=("grades",))
+    assert len(snapshot.courses[0].grade_items) == 2
+
+
 def test_limits_unsupported_sources_and_course_identity() -> None:
     service, courses, _ = make_service([course("1"), course("2")])
     with pytest.raises(ValueError):
