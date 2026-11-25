@@ -1,5 +1,17 @@
 # Proposed GitHub roadmap (not filed)
 
+## 2026-11-25 offline development status
+
+The bounded academic snapshot is merged through PR #11, and its Markdown report
+is merged through PR #10. Portable agent guidance and offline diagnostics
+remain in separate review branches described in
+[the development session record](DEVELOPMENT_SESSION_2026-11-25.md).
+None of these features
+establishes Brightspace compatibility or resolves the provider-evidence
+dependencies below. No official final-grade calculation, overdue label,
+assignment-detail route, feedback route, or automatic file retrieval was
+enabled.
+
 These are issue-ready drafts based on `main` after PR #4 merged at
 `75b6d79677f8ffcea2f84db9a774218c7b9141d6`. No issue, label or milestone has been created.
 Use only the labels listed below. `S`, `M`, `L` estimate relative implementation complexity.

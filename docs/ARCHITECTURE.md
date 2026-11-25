@@ -9,6 +9,14 @@ It adds no route or authentication path. Per-course source status distinguishes
 failures from empty and unrequested results. The existing `overview` contract
 remains intact. See [the snapshot contract](SNAPSHOT.md).
 
+## Offline diagnostics
+
+`diagnostics.py` is a separate offline boundary. It reads package metadata,
+the Python version, dependency availability and validated non-secret base-URL
+configuration. It neither builds `AuthService` nor touches credential storage
+or `D2LHttpClient`. The CLI exposes this result through `diagnostics [--json]`;
+see [the local diagnostics contract](DIAGNOSTICS.md).
+
 D2L-CLI is a local, single-process Python CLI. It has no server, daemon, cache, database or
 plugin system, and none is planned. This document describes the code **as it is**. It was
 verified against the import graph: there are no import cycles, `providers` never import `cli`,

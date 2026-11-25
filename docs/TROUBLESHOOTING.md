@@ -1,5 +1,9 @@
 # Troubleshooting
 
+Run `d2l diagnostics --json` for local-only version, dependency and base-URL
+checks. It does not inspect session storage or verify Brightspace access;
+see [the diagnostics contract](DIAGNOSTICS.md).
+
 Diagnostics intentionally omit authenticated URLs, identifiers, response bodies, credentials and
 academic content. When you report a problem, include the `error:` line and `d2l --version`, never
 page contents, cookies or screenshots.

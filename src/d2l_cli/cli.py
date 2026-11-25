@@ -64,6 +64,7 @@ from d2l_cli.content_service import ContentService
 from d2l_cli.course_resolver import AmbiguousCourseError, CourseResolutionError, CourseResolver
 from d2l_cli.course_service import CourseService
 from d2l_cli.credentials import KeyringCredentialStore
+from d2l_cli.diagnostics import diagnostics_report
 from d2l_cli.discussion_service import DiscussionService
 from d2l_cli.grade_service import GradeService
 from d2l_cli.markdown_report import render_snapshot_markdown
@@ -156,6 +157,23 @@ content_app = typer.Typer(help="Read the course content hierarchy (no downloads)
 app.add_typer(content_app, name="content")
 
 _ANNOUNCEMENT_PREVIEW_CHARS = 120
+
+
+@app.command("diagnostics")
+def diagnostics(
+    json_output: bool = typer.Option(False, "--json", help="Emit local diagnostics as JSON."),
+) -> None:
+    """Inspect local capabilities without credentials or provider requests."""
+    report = diagnostics_report()
+    if json_output:
+        typer.echo(json.dumps(report))
+        return
+    typer.echo(f"D2L-CLI {report['application_version']} on Python {report['python_version']}")
+    typer.echo(f"Configuration valid: {str(report['configuration_valid']).lower()}")
+    typer.echo("Session presence: not checked; provider verification: not performed")
+    missing = [name for name, available in report["dependencies"].items() if not available]
+    if missing:
+        typer.echo(f"Missing local dependencies: {', '.join(missing)}")
 
 
 def _build_auth_service(config: Config) -> AuthService:

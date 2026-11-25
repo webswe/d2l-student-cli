@@ -14,6 +14,12 @@ needed only for real logins (`uv run playwright install chromium`), never for th
 
 ## The quality gate (run before every PR)
 
+For the local-only diagnostics command, run
+`uv run pytest -q tests/test_diagnostics.py` before the full suite. The test
+uses a malformed fictional URL and checks that no origin or secret text is
+echoed. Diagnostics must never instantiate `AuthService`, inspect keyring, or
+make a provider request. Package smoke: `uv run d2l diagnostics --json`.
+
 ```powershell
 uv lock --check
 uv run ruff check .
