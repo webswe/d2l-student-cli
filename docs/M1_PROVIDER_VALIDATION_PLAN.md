@@ -16,17 +16,20 @@ in the [roadmap](ROADMAP.md).
   check small and owner-operated. Do not run discussion-post retrieval merely because its flag
   exists. A GET may have server-side effects.
 - Record only: test date, tenant type (test/production, without hostname), role, API product and
-  minor version, route *template* (no numeric ids or query values), HTTP status class, accepted
-  session yes/no, structural field names and types, page/completeness behavior, read-state result
-  (unchanged/changed/unknown), CLI outcome code, and decision. Use a private, access-limited
-  evidence note. Do not retain raw requests, URLs, headers, cookies, tokens, session files,
-  screenshots, response bodies, student or course identifiers, names, event text, grades, quiz
-  contents, attempts, discussion text, or other sensitive academic data. Redact before making
-  fictional fixtures; inspect fixtures for accidental real values.
+  minor version, route *template* (no numeric ids or query values), exact numeric HTTP status
+  code, accepted session yes/no, structural field names and types, page/completeness behavior,
+  read-state result (unchanged/changed/unknown), CLI outcome code, and decision. Use a private,
+  access-limited evidence note. Do not retain raw requests, URLs, headers, cookies, tokens,
+  session files, screenshots, response bodies, student or course identifiers, names, event text,
+  grades, quiz contents, attempts, discussion text, or other sensitive academic data. Redact before
+  making fictional fixtures; inspect fixtures for accidental real values.
 - Record **unknown** when a check cannot be made without exposing data or changing state. A 200,
   an empty list, or a GET method alone cannot establish completeness, visibility or lack of side
   effects. File any compatibility change with fictional fixtures and repeat offline tests before
   changing the go/no-go decision.
+- A successful `/d2l/api/versions/` request establishes available API versions only; it does not
+  prove that the browser session is accepted by an authenticated route. Verify session acceptance
+  independently at each relevant, separately approved authenticated route before passing that gate.
 
 ## Offline preparation (safe for this milestone)
 
@@ -48,11 +51,10 @@ in the [roadmap](ROADMAP.md).
 
 **Proposed owner sequence after separate approval:** Use a test course with owner-known, synthetic
 timed, all-day and recurring events. First check `/d2l/api/versions/` for a supported LE version
-(1.82–1.120) and whether the approved browser session is accepted by that route. At LE 1.94 or
-later, check the occurrence route for one course and a bounded window; otherwise check the
-course-scoped `myEvents/` route. Record acceptance separately for each route. The client falls
-back from occurrences to the base route only on 403 or 404; a fallback is not proof of equivalent
-recurrence coverage.
+(1.82–1.120). At LE 1.94 or later, check the occurrence route for one course and a bounded
+window; otherwise check the course-scoped `myEvents/` route. Record acceptance separately for
+each route. The client falls back from occurrences to the base route only on 403 or 404; a
+fallback is not proof of equivalent recurrence coverage.
 
 Check field names and types against `EventDataInfo` and `EventWithOccurrencesInfo`, including
 `Occurrences`, `CalendarEventId`, course association, `StartDateTime`/`EndDateTime`,
