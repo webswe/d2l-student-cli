@@ -8,6 +8,12 @@ record writes. Its `service_calls` count is local invocation accounting;
 HTTP request count remains unknown. Academic text in JSON remains untrusted
 and must be escaped by any downstream renderer.
 
+The snapshot Markdown renderer treats provider strings as data. It removes
+terminal controls, URL-like tokens and Markdown/HTML syntax before rendering.
+It does not embed provider HTML or build provider-controlled links. Long fields
+are capped at 500 characters to bound report size. The renderer is pure and
+does not invoke a service or write records to disk.
+
 > Status: the controls described here are implemented; the current release's guarantees and
 > limits are summarized in the README "Security model" and `SECURITY.md`.
 
