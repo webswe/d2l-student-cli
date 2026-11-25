@@ -15,8 +15,8 @@ Window semantics (documented in docs/ACTIVITIES.md):
 * A recurring event is complete only when its occurrences were retrieved (LE 1.94+ occurrence
   route). A recurring event shown only as a definition makes the listing incomplete
   (``recurring_not_expanded``): its start and end describe the series, not each occurrence.
-* Events are de-duplicated by ``(event id, occurrence id)``, so distinct occurrences of one series
-  are never collapsed and the same occurrence is never counted twice.
+* Events are de-duplicated by ``(course id, event id, occurrence id)``, so equal event ids in
+  different courses and distinct occurrences of one series are never collapsed.
 
 Nothing here hides a failure. A course that could not be read, or whose provider reported further
 pages that are not followed, is listed explicitly and the listing is marked incomplete.
@@ -184,7 +184,7 @@ class CalendarService:
         fails the first error is raised, so a total outage is never reported as an empty calendar.
         """
         selected = list(courses)
-        events: dict[tuple[str, str | None], CalendarEvent] = {}
+        events: dict[tuple[str, str, str | None], CalendarEvent] = {}
         pages: list[CourseEventPage] = []
         fallback: list[str] = []
         failed: list[CourseFailure] = []
@@ -210,7 +210,7 @@ class CalendarService:
             for event in page.events:
                 if not in_window(event, window):
                     continue
-                key = (event.event_id, event.occurrence_id)
+                key = (event.course_id, event.event_id, event.occurrence_id)
                 if key in events:
                     duplicates += 1
                     continue
