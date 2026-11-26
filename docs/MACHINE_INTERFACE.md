@@ -5,6 +5,8 @@ Existing commands and envelopes retain their contracts.
 The additive, offline `diagnostics --json` command is specified in
 [DIAGNOSTICS.md](DIAGNOSTICS.md). It never reads a saved session or contacts a
 provider.
+Agent subprocess guidance and explicit skill generation are documented in
+[AGENT_INTEGRATION.md](AGENT_INTEGRATION.md).
 
 This document defines the supported subprocess JSON interface of D2L-CLI 0.1.0.
 It describes normalized

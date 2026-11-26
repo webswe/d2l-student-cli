@@ -173,6 +173,7 @@ accepted. A locally present session is not reported as authenticated unless that
 | `uv run d2l snapshot --json` | Emits a bounded, versioned academic snapshot with per-source statuses. |
 | `uv run d2l snapshot --format markdown` | Renders that same bounded snapshot as a safe Markdown report. |
 | `uv run d2l diagnostics --json` | Reports local version, configuration validity, dependencies, and unverified capability status without reading a session. |
+| `uv run d2l agent skill generate --preview` | Previews portable, static agent instructions without writing a file. |
 | `uv run d2l overview --all-courses` | Includes inactive accessible courses; inaccessible courses remain excluded. |
 
 `<id>` is the Brightspace course (org-unit) id shown in the `courses list --json` output (`id`). Placeholders only
