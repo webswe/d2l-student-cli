@@ -120,6 +120,19 @@ def test_creation_rejects_file_added_after_validation_without_symlink_privilege(
     assert list(tmp_path.glob(".d2l-agent-*")) == []
 
 
+def test_failed_hard_link_leaves_no_destination_or_temporary_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail_link(_source: str, _destination: Path) -> None:
+        raise OSError("hard links unavailable")
+
+    monkeypatch.setattr(agent_skill.os, "link", fail_link)
+    with pytest.raises(OSError, match="hard links unavailable"):
+        generate_skill(Path("AGENT.md"), cwd=tmp_path)
+    assert not (tmp_path / "AGENT.md").exists()
+    assert list(tmp_path.glob(".d2l-agent-*")) == []
+
+
 def test_preview_has_no_write_and_requires_no_auth(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

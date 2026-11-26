@@ -182,6 +182,7 @@ def diagnostics(
     if missing:
         typer.echo(f"Missing local dependencies: {', '.join(missing)}")
 
+
 @agent_skill_app.command("generate")
 def agent_skill_generate(
     output: Path | None = typer.Option(  # noqa: B008 - Typer options use argument defaults

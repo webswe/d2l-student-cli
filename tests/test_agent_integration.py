@@ -89,6 +89,21 @@ def test_subprocess_timeout_is_sanitized(monkeypatch: pytest.MonkeyPatch) -> Non
     assert "private grade" not in str(info.value)
 
 
+def test_unexpected_subprocess_failure_is_sanitized(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail(*args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("private grade")
+
+    monkeypatch.setattr(subprocess, "run", fail)
+    with pytest.raises(AgentSnapshotError, match="command_failed") as info:
+        run_snapshot()
+    assert "private grade" not in str(info.value)
+
+
+def test_missing_subprocess_stdout_is_sanitized() -> None:
+    with pytest.raises(AgentSnapshotError, match="malformed_json"):
+        decode_snapshot_process(0, None)  # type: ignore[arg-type]
+
+
 @pytest.mark.parametrize("invalid", [0.0, -1.0, float("inf"), float("nan")])
 def test_subprocess_rejects_nonfinite_or_nonpositive_timeouts(invalid: float) -> None:
     with pytest.raises(ValueError, match="invalid snapshot subprocess bound"):

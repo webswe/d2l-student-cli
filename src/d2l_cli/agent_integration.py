@@ -18,6 +18,8 @@ class AgentSnapshotError(Exception):
 
 def decode_snapshot_process(exit_code: int, stdout: str) -> dict[str, Any]:
     """Validate the minimum v1 envelope before an agent uses any records."""
+    if not isinstance(stdout, str):
+        raise AgentSnapshotError("malformed_json")
     if not stdout.strip():
         raise AgentSnapshotError("command_failed" if exit_code else "malformed_json")
     try:
@@ -77,4 +79,6 @@ def run_snapshot(
         raise AgentSnapshotError("timeout") from None
     except OSError:
         raise AgentSnapshotError("command_unavailable") from None
+    except Exception:
+        raise AgentSnapshotError("command_failed") from None
     return decode_snapshot_process(completed.returncode, completed.stdout)
