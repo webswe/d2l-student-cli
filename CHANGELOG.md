@@ -21,6 +21,10 @@ First public version.
   your own verified attempt summaries (`quizzes list`, `quizzes attempts`), and discussion forums,
   topics and posts (`discussions forums`, `topics`, `posts`), documented in
   [docs/ACTIVITIES.md](docs/ACTIVITIES.md).
+- Cross-course read-only views: `grades overview`, `assignments dashboard`,
+  `announcements overview` and `student overview`, with bounded `--course` selection through
+  the existing resolver, versioned JSON envelopes and safe text/Markdown output (see
+  [docs/ACADEMIC_VIEWS.md](docs/ACADEMIC_VIEWS.md)). Offline-tested only.
 - `d2l --version`.
 - Offline test suite on fictional fixtures, strict type checking, reproducible builds, and a
   Windows CI matrix for Python 3.11, 3.12 and 3.13.

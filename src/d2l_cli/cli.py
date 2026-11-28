@@ -29,9 +29,9 @@ from __future__ import annotations
 
 import base64
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import UTC, date, datetime
-from typing import Any, NoReturn
+from typing import Annotated, Any, NoReturn
 
 import typer
 
@@ -39,6 +39,18 @@ from d2l_cli.academic_overview_service import (
     AcademicCourseOverview,
     AcademicOverviewResult,
     AcademicOverviewService,
+)
+from d2l_cli.academic_views import (
+    DEFAULT_ITEMS_PER_COURSE,
+    MAX_ITEMS_PER_COURSE,
+    announcements_overview_json,
+    assignments_dashboard_json,
+    grades_overview_json,
+    render_view_markdown,
+    render_view_text,
+    student_overview_json,
+    view_is_partial,
+    view_is_total_failure,
 )
 from d2l_cli.announcement_sanitizer import sanitize_plain_text
 from d2l_cli.announcement_service import AnnouncementService
@@ -61,7 +73,12 @@ from d2l_cli.client.errors import D2LError, SSOLoginFailedError
 from d2l_cli.client.http import D2LHttpClient
 from d2l_cli.config import Config, load_config
 from d2l_cli.content_service import ContentService
-from d2l_cli.course_resolver import AmbiguousCourseError, CourseResolutionError, CourseResolver
+from d2l_cli.course_resolver import (
+    AmbiguousCourseError,
+    CourseResolutionError,
+    CourseResolver,
+    validate_course_query,
+)
 from d2l_cli.course_service import CourseService
 from d2l_cli.credentials import KeyringCredentialStore
 from d2l_cli.diagnostics import diagnostics_report
@@ -155,6 +172,8 @@ discussions_app = typer.Typer(help="Read discussion forums, topics and posts (re
 app.add_typer(discussions_app, name="discussions")
 content_app = typer.Typer(help="Read the course content hierarchy (no downloads).")
 app.add_typer(content_app, name="content")
+student_app = typer.Typer(help="Student-oriented summaries composed from existing reads.")
+app.add_typer(student_app, name="student")
 
 _ANNOUNCEMENT_PREVIEW_CHARS = 120
 
@@ -1862,6 +1881,185 @@ def content_tree(
     for node in tree.modules:
         show(node, 0)
     typer.echo("warning: content completeness is unknown", err=True)
+
+
+# ---------------------------------------------------------------- cross-course views
+# Each command below is a thin wrapper over one SnapshotService invocation (one
+# course-list read plus one existing read per selected course and source). They
+# add no provider route and keep their own versioned JSON envelope.
+
+
+
+def _usage_error(message: str) -> NoReturn:
+    typer.echo(f"error: {message}", err=True)
+    raise typer.Exit(code=2)
+
+
+def _run_academic_view(
+    *,
+    sources: tuple[str, ...],
+    json_output: bool,
+    output_format: str,
+    course: list[str],
+    max_courses: int,
+    all_courses: bool,
+    build: Callable[[Snapshot], dict[str, Any]],
+) -> None:
+    # Validate every option before credentials or the network are touched.
+    if output_format not in {"text", "markdown"} or (json_output and output_format != "text"):
+        _usage_error("--format accepts text or markdown and cannot be combined with --json")
+    if not 1 <= max_courses <= 20:
+        _usage_error("--max-courses must be between 1 and 20")
+    if len(course) > 20:
+        _usage_error("at most 20 --course values are allowed")
+    try:
+        queries = tuple(validate_course_query(q) for q in course)
+    except CourseResolutionError:
+        _usage_error("--course value is invalid")
+    config = _load_cli_config()
+    try:
+        headers = _build_auth_service(config).header_provider()
+        snapshot = _build_snapshot_service(config, headers).get_snapshot(
+            sources=sources,
+            active_only=not all_courses,
+            max_courses=max_courses,
+            course_queries=queries,
+            provider_order=True,
+        )
+    except AmbiguousCourseError as exc:
+        details = ", ".join(
+            f"{_terminal_text(c.id)} {_terminal_text(c.code)}" for c in exc.matches[:10]
+        )
+        _fail(json_output=json_output, message=f"course query is ambiguous: {details}")
+    except CourseResolutionError as exc:
+        _fail(json_output=json_output, message=str(exc))
+    except D2LError as exc:
+        _fail(json_output=json_output, message=str(exc))
+    except ValueError:
+        _fail(json_output=json_output, message="course selection or normalized data is invalid")
+
+    payload = build(snapshot)
+    if json_output:
+        typer.echo(json.dumps(payload))
+    elif output_format == "markdown":
+        typer.echo(render_view_markdown(payload), nl=False)
+    else:
+        typer.echo(render_view_text(payload), nl=False)
+    if view_is_partial(snapshot, sources):
+        typer.echo("warning: some course reads failed; inspect per-course source status", err=True)
+    if view_is_total_failure(snapshot, sources):
+        raise typer.Exit(code=1)
+
+
+@grades_app.command("overview")
+def grades_overview(
+    json_output: bool = typer.Option(False, "--json", help="Emit the versioned JSON envelope."),
+    output_format: str = typer.Option("text", "--format", help="Human report: text or markdown."),
+    course: Annotated[
+        list[str] | None,
+        typer.Option("--course", help="Course id, code, or name (repeatable)."),
+    ] = None,
+    max_courses: int = typer.Option(10, "--max-courses", help="Maximum selected courses (1-20)."),
+    all_courses: bool = typer.Option(False, "--all-courses", help="Include inactive courses."),
+) -> None:
+    """Displayed grade rows across courses. Never calculates a final grade or average."""
+    _run_academic_view(
+        sources=("grades",),
+        json_output=json_output,
+        output_format=output_format,
+        course=course or [],
+        max_courses=max_courses,
+        all_courses=all_courses,
+        build=grades_overview_json,
+    )
+
+
+@assignments_app.command("dashboard")
+def assignments_dashboard(
+    json_output: bool = typer.Option(False, "--json", help="Emit the versioned JSON envelope."),
+    output_format: str = typer.Option("text", "--format", help="Human report: text or markdown."),
+    course: Annotated[
+        list[str] | None,
+        typer.Option("--course", help="Course id, code, or name (repeatable)."),
+    ] = None,
+    max_courses: int = typer.Option(10, "--max-courses", help="Maximum selected courses (1-20)."),
+    all_courses: bool = typer.Option(False, "--all-courses", help="Include inactive courses."),
+    sort: str = typer.Option("provider", "--sort", help="provider (default) or due."),
+    due_date: str = typer.Option(
+        "any", "--due-date", help="any, recognized, or unrecognized displayed due date."
+    ),
+) -> None:
+    """Assignments across courses with displayed due dates (no overdue/complete labels)."""
+    if sort not in {"provider", "due"}:
+        _usage_error("--sort must be provider or due")
+    if due_date not in {"any", "recognized", "unrecognized"}:
+        _usage_error("--due-date must be any, recognized, or unrecognized")
+    _run_academic_view(
+        sources=("assignments",),
+        json_output=json_output,
+        output_format=output_format,
+        course=course or [],
+        max_courses=max_courses,
+        all_courses=all_courses,
+        build=lambda snap: assignments_dashboard_json(
+            snap,
+            due_filter=due_date,  # type: ignore[arg-type]
+            sort=sort,  # type: ignore[arg-type]
+        ),
+    )
+
+
+@announcements_app.command("overview")
+def announcements_overview(
+    json_output: bool = typer.Option(False, "--json", help="Emit the versioned JSON envelope."),
+    output_format: str = typer.Option("text", "--format", help="Human report: text or markdown."),
+    course: Annotated[
+        list[str] | None,
+        typer.Option("--course", help="Course id, code, or name (repeatable)."),
+    ] = None,
+    max_courses: int = typer.Option(10, "--max-courses", help="Maximum selected courses (1-20)."),
+    all_courses: bool = typer.Option(False, "--all-courses", help="Include inactive courses."),
+    items_per_course: int = typer.Option(
+        DEFAULT_ITEMS_PER_COURSE,
+        "--items-per-course",
+        help=f"Announcements shown per course (1-{MAX_ITEMS_PER_COURSE}).",
+    ),
+) -> None:
+    """Announcements across courses; no detail pages are followed and nothing is marked read."""
+    if not 1 <= items_per_course <= MAX_ITEMS_PER_COURSE:
+        _usage_error(f"--items-per-course must be between 1 and {MAX_ITEMS_PER_COURSE}")
+    _run_academic_view(
+        sources=("announcements",),
+        json_output=json_output,
+        output_format=output_format,
+        course=course or [],
+        max_courses=max_courses,
+        all_courses=all_courses,
+        build=lambda snap: announcements_overview_json(snap, items_per_course=items_per_course),
+    )
+
+
+@student_app.command("overview")
+def student_overview(
+    json_output: bool = typer.Option(False, "--json", help="Emit the versioned JSON envelope."),
+    output_format: str = typer.Option("text", "--format", help="Human report: text or markdown."),
+    course: Annotated[
+        list[str] | None,
+        typer.Option("--course", help="Course id, code, or name (repeatable)."),
+    ] = None,
+    max_courses: int = typer.Option(10, "--max-courses", help="Maximum selected courses (1-20)."),
+    all_courses: bool = typer.Option(False, "--all-courses", help="Include inactive courses."),
+) -> None:
+    """Observed record counts across courses. Counts are not provider totals."""
+    _run_academic_view(
+        sources=("assignments", "grades", "announcements"),
+        json_output=json_output,
+        output_format=output_format,
+        course=course or [],
+        max_courses=max_courses,
+        all_courses=all_courses,
+        build=student_overview_json,
+    )
 
 
 def main() -> None:

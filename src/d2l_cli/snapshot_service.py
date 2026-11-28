@@ -23,6 +23,7 @@ from d2l_cli.client.errors import (
     ProviderEndpointChangedError,
     RateLimitedError,
 )
+from d2l_cli.course_resolver import resolve_course
 from d2l_cli.models.announcement import Announcement
 from d2l_cli.models.assignment import Assignment
 from d2l_cli.models.course import Course
@@ -89,7 +90,18 @@ class SnapshotService:
         sources: tuple[str, ...] = SOURCES,
         active_only: bool = True,
         max_courses: int = 10,
+        course_queries: tuple[str, ...] = (),
+        provider_order: bool = False,
     ) -> Snapshot:
+        """Compose bounded course-scoped reads.
+
+        ``course_queries`` narrows selection through the existing deterministic
+        course resolver (ambiguous or unknown queries raise a ``ValueError``
+        subclass before any per-course read). ``provider_order`` keeps the
+        order in which the provider returned grade and announcement rows
+        instead of the default deterministic sort; duplicate rows are always
+        retained for grades.
+        """
         if not 1 <= max_courses <= MAX_COURSES:
             raise ValueError("max_courses must be between 1 and 20")
         if (
@@ -100,7 +112,14 @@ class SnapshotService:
             raise ValueError("unsupported or repeated snapshot source")
         requested = tuple(s for s in SOURCES if s in sources)
         listed = self._courses.list_courses()
-        selected = [c for c in listed if c.can_access and (c.is_active or not active_only)]
+        if course_queries:
+            resolved: dict[str, Course] = {}
+            for query in course_queries:
+                found = resolve_course(query, listed)
+                resolved[found.id] = found
+            selected = list(resolved.values())
+        else:
+            selected = [c for c in listed if c.can_access and (c.is_active or not active_only)]
         if len(selected) > max_courses:
             raise ValueError("selected courses exceed max_courses; increase the explicit limit")
         ids = [c.id for c in selected]
@@ -129,11 +148,10 @@ class SnapshotService:
                         by_id = {a.id: a for a in page.assignments}
                         if len(set(page.assignments)) != len(by_id):
                             raise ValueError("ambiguous assignment identity")
-                        assignments = tuple(
-                            sorted(
-                                by_id.values(),
-                                key=lambda a: (a.id, a.name),
-                            )
+                        assignments = (
+                            tuple(by_id.values())
+                            if provider_order
+                            else tuple(sorted(by_id.values(), key=lambda a: (a.id, a.name)))
                         )
                         statuses[source] = SourceResult(
                             "success",
@@ -149,16 +167,20 @@ class SnapshotService:
                             raise ValueError("invalid grade association")
                         # Grades have no provider item ID. Identical display rows may
                         # represent distinct items, so retain every provider row.
-                        grades = tuple(
-                            sorted(
-                                page_g.items,
-                                key=lambda g: (
-                                    g.label,
-                                    g.displayed_points or "",
-                                    g.displayed_grade or "",
-                                    g.displayed_weight or "",
-                                    g.feedback_availability.value,
-                                ),
+                        grades = (
+                            page_g.items
+                            if provider_order
+                            else tuple(
+                                sorted(
+                                    page_g.items,
+                                    key=lambda g: (
+                                        g.label,
+                                        g.displayed_points or "",
+                                        g.displayed_grade or "",
+                                        g.displayed_weight or "",
+                                        g.feedback_availability.value,
+                                    ),
+                                )
                             )
                         )
                         statuses[source] = SourceResult("success", page_g.completeness.value)
@@ -172,10 +194,14 @@ class SnapshotService:
                         by_announcement_id = {n.announcement_id: n for n in page_n.items}
                         if len(set(page_n.items)) != len(by_announcement_id):
                             raise ValueError("ambiguous announcement identity")
-                        announcements = tuple(
-                            sorted(
-                                by_announcement_id.values(),
-                                key=lambda n: (n.announcement_id, n.title),
+                        announcements = (
+                            tuple(by_announcement_id.values())
+                            if provider_order
+                            else tuple(
+                                sorted(
+                                    by_announcement_id.values(),
+                                    key=lambda n: (n.announcement_id, n.title),
+                                )
                             )
                         )
                         statuses[source] = SourceResult("success", page_n.completeness.value)

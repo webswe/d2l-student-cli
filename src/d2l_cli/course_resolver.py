@@ -23,25 +23,31 @@ def _key(value: str) -> str:
     return "".join(char for char in value.casefold() if char.isalnum())
 
 
-def resolve_course(query: str, courses: list[Course]) -> Course:
-    """Resolve by ID, code, name, prefix, then substring; never pick a tie."""
+def validate_course_query(query: str) -> str:
+    """Validate and normalize a course query without any provider data."""
     if not isinstance(query, str) or len(query) > 200 or not query.strip():
         raise CourseResolutionError("course query is invalid")
 
     # Format controls can change what a person sees; pictographic symbols must
     # not disappear and accidentally turn a hostile query into a valid code.
     if any(
-        (unicodedata.category(char).startswith("C") and char != "\t")
+        (unicodedata.category(char).startswith("C") and char != "	")
         or unicodedata.category(char) == "So"
-        or (char.isspace() and char not in " \t")
+        or (char.isspace() and char not in " 	")
         for char in query
     ):
         raise CourseResolutionError("course query is invalid")
 
     query = query.strip()
-    key = _key(query)
-    if not key:
+    if not _key(query):
         raise CourseResolutionError("course query is invalid")
+    return query
+
+
+def resolve_course(query: str, courses: list[Course]) -> Course:
+    """Resolve by ID, code, name, prefix, then substring; never pick a tie."""
+    query = validate_course_query(query)
+    key = _key(query)
 
     visible = [course for course in courses if course.is_active and course.can_access]
 

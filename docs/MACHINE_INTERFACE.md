@@ -1,6 +1,8 @@
 # Machine-readable interface
 
-The additive `snapshot` v1 envelope is specified in [SNAPSHOT.md](SNAPSHOT.md).
+The additive `snapshot` v1 envelope is specified in [SNAPSHOT.md](SNAPSHOT.md). The four cross-course
+view envelopes (`grades_overview`, `assignments_dashboard`, `announcements_overview`,
+`student_overview`, each `schema_version` 1) are specified in [ACADEMIC_VIEWS.md](ACADEMIC_VIEWS.md).
 Existing commands and envelopes retain their contracts.
 The additive, offline `diagnostics --json` command is specified in
 [DIAGNOSTICS.md](DIAGNOSTICS.md). It never reads a saved session or contacts a
@@ -21,6 +23,10 @@ d2l grades list --course <id> --json [--include-completeness]
 d2l announcements list --course <id> --json [--include-completeness]
 d2l overview --json [--all-courses]
 d2l snapshot --json [--sources assignments,grades,announcements] [--max-courses N] [--all-courses]
+d2l grades overview --json [--course Q]... [--max-courses N] [--all-courses]
+d2l assignments dashboard --json [--sort provider|due] [--due-date any|recognized|unrecognized] [...]
+d2l announcements overview --json [--items-per-course N] [...]
+d2l student overview --json [...]
 d2l syllabus find --course <id> --json
 d2l syllabus fetch --course <id> --topic <topicId> --json
 ```

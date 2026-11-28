@@ -23,6 +23,15 @@ def _text(value: str | None) -> str:
     return _MARKDOWN.sub(r"\\\1", html.escape(normalized, quote=True))
 
 
+def omit_urls(value: str) -> str:
+    return _URL.sub("[URL omitted]", value)
+
+
+def inert_markdown_text(value: str | None) -> str:
+    """Public escape boundary shared by every Markdown renderer."""
+    return _text(value)
+
+
 def render_snapshot_markdown(snapshot: Snapshot) -> str:
     """Pure rendering: no provider calls, file access, or interpretation of text."""
     lines = [
